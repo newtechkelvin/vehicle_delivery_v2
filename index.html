@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>車輛交收與損壞申報系統 (Fleet & Equipment Check-in)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Firebase JS SDK (v10.x Compact / Modular via Script) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <!-- html2pdf.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        .car-zone { transition: all 0.18s ease; cursor: pointer; }
+        .car-zone:hover { fill: rgba(59, 130, 246, 0.3); }
+        .car-zone.active-damage { fill: rgba(239, 68, 68, 0.65); stroke: #b91c1c; stroke-width: 2.5px; }
+        .paste-zone { transition: all 0.2s ease; border: 2px dashed #cbd5e1; }
+        .paste-zone:hover, .paste-zone.dragover { border-color: #3b82f6; background-color: #eff6ff; }
+        @media print {
+            body * { visibility: hidden; }
+            .print-section, .print-section * { visibility: visible; }
+            .print-section { position: absolute; left: 0; top: 0; width: 100%; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- 保留：用於無刷新跨網域上傳照片至 Google Drive 的隱藏 Iframe 與 Form -->
+    <iframe name="hidden_upload_iframe" id="hidden_upload_iframe" class="hidden"></iframe>
+    <form id="gas-upload-form" method="POST" target="hidden_upload_iframe" class="hidden">
+        <input type="hidden" name="folderName" id="gas-folderName">
+    </form>
+
+    <!-- Navbar -->
+    <header class="bg-slate-900 text-white shadow-md no-print">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="bg-blue-600 p-2 rounded-lg"><i data-lucide="truck" class="w-6 h-6 text-white"></i></div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-tight">車輛交收與損壞申報系統</h1>
+                    <p class="text-xs text-slate-400">New Tech Motor Engineering Limited</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button onclick="switchTab('driver')" id="nav-driver-btn" class="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white transition">員工申報端</button>
+                <button onclick="switchTab('admin')" id="nav-admin-btn" class="px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition">主管後台端</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-grow max-w-7xl w-full mx-auto p-4 sm:p-6">
+
+        <!-- ==================== 員工申報端 ==================== -->
+        <section id="view-driver" class="space-y-6">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                <div class="border-b border-slate-100 pb-4 mb-6">
+                    <h2 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+                        <i data-lucide="clipboard-pen-line" class="w-5 h-5 text-blue-600"></i> 車輛交收與事故申報表
+                    </h2>
+                    <p class="text-sm text-slate-500 mt-1">請選擇申報類別，並確實填寫相關資訊。</p>
+                </div>
+
+                <!-- 類別切換按鈕 -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                    <button type="button" onclick="setCategory(1)" id="cat-btn-1" class="p-4 rounded-xl border-2 border-blue-600 bg-blue-50 text-blue-900 font-bold flex items-center justify-center gap-3 shadow-sm transition">
+                        <i data-lucide="clipboard-check" class="w-6 h-6 text-blue-600"></i>
+                        <span class="text-base">第 1 類：日常交收車輛申報表</span>
+                    </button>
+                    <button type="button" onclick="setCategory(2)" id="cat-btn-2" class="p-4 rounded-xl border-2 border-slate-200 bg-slate-50 text-slate-600 font-bold flex items-center justify-center gap-3 transition">
+                        <i data-lucide="alert-triangle" class="w-6 h-6 text-red-500"></i>
+                        <span class="text-base">第 2 類：車輛損壞申報表</span>
+                    </button>
+                </div>
+
+                <form id="report-form" onsubmit="submitReport(event)" class="space-y-6" novalidate>
+                    
+                    <!-- 第 1 類 表單內容 -->
+                    <div id="cat1-fields" class="space-y-6">
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                            <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-200 pb-2">
+                                <i data-lucide="file-text" class="w-4 h-4 text-blue-600"></i> 第一部分：基本資訊
+                            </h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">T牌號碼 *</label>
+                                    <select id="cat1-t-plate" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                        <option value="">-- 請選擇 T 牌 --</option>
+                                        <option value="T15195">T15195</option>
+                                        <option value="T11835">T11835</option>
+                                        <option value="T10559">T10559</option>
+                                        <option value="T13012">T13012</option>
+                                        <option value="T13013">T13013</option>
+                                    </select>
+                                </div>
+
+                                <!-- 司機/員工姓名 (下拉選單 + 手動輸入) -->
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">司機/員工姓名 *</label>
+                                    <select id="cat1-driver-select" onchange="toggleCustomOption('cat1-driver-select', 'cat1-driver-custom')" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                        <option value="">-- 請選擇司機/員工 --</option>
+                                        <option value="林國枝">林國枝</option>
+                                        <option value="鄭偉倫">鄭偉倫</option>
+                                        <option value="黃家鑑">黃家鑑</option>
+                                        <option value="林耀銓">林耀銓</option>
+                                        <option value="other">其他 (手動輸入)</option>
+                                    </select>
+                                    <input type="text" id="cat1-driver-custom" placeholder="請輸入全名" class="w-full mt-2 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                                </div>
+
+                                <!-- 客人 / 部門 (下拉選單 + 手動輸入) -->
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">客人 / 部門</label>
+                                    <select id="cat1-dept-select" onchange="toggleCustomOption('cat1-dept-select', 'cat1-dept-custom')" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                        <option value="">-- 請選擇客人 / 部門 --</option>
+                                        <option value="警務處">警務處</option>
+                                        <option value="消防處">消防處</option>
+                                        <option value="懲教署">懲教署</option>
+                                        <option value="機電工程署">機電工程署</option>
+                                        <option value="衛生處">衛生處</option>
+                                        <option value="博愛醫院">博愛醫院</option>
+                                        <option value="東華三院">東華三院</option>
+                                        <option value="保良局">保良局</option>
+                                        <option value="耀能SAHK">耀能SAHK</option>
+                                        <option value="匡智">匡智</option>
+                                        <option value="靈實HOHCS">靈實HOHCS</option>
+                                        <option value="明愛">明愛</option>
+                                        <option value="非緊">非緊</option>
+                                        <option value="復康會">復康會</option>
+                                        <option value="易達">易達</option>
+                                        <option value="鄰舍輔導會NAAC">鄰舍輔導會NAAC</option>
+                                        <option value="基督教CFSC">基督教CFSC</option>
+                                        <option value="紅十字會">紅十字會</option>
+                                        <option value="駕駛學院">駕駛學院</option>
+                                        <option value="中電CLP">中電CLP</option>
+                                        <option value="港燈HKE">港燈HKE</option>
+                                        <option value="other">其他 (手動輸入)</option>
+                                    </select>
+                                    <input type="text" id="cat1-dept-custom" placeholder="例如：工程部 / 客戶工程公司" class="w-full mt-2 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                                </div>
+                                
+                                <!-- 品牌 -->
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">品牌 *</label>
+                                    <select id="cat1-brand-select" onchange="toggleBrandCustom('cat1')" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                        <option value="">-- 請選擇品牌 --</option>
+                                        <option value="三菱">三菱</option>
+                                        <option value="豐田">豐田</option>
+                                        <option value="Benz">Benz</option>
+                                        <option value="MAN">MAN</option>
+                                        <option value="標誌">標誌</option>
+                                        <option value="BMW">BMW</option>
+                                        <option value="福田">福田</option>
+                                        <option value="Volvo">Volvo</option>
+                                        <option value="Maxus">Maxus</option>
+                                        <option value="BYD">BYD</option>
+                                        <option value="BAZN">BAZN</option>
+                                        <option value="other">其他 (手動輸入)</option>
+                                    </select>
+                                    <input type="text" id="cat1-brand-custom" placeholder="請輸入品牌名稱" class="w-full mt-2 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                                </div>
+
+                                <!-- 型號與車牌 (二選一必填) -->
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">型號 (型號或車牌二選一必填)</label>
+                                    <input type="text" id="cat1-model" placeholder="例如：Hiace / Canter" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">車牌 (型號或車牌二選一必填)</label>
+                                    <input type="text" id="cat1-plate" placeholder="例如：AB1234" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">底盤號碼 (VIN)</label>
+                                    <input type="text" id="cat1-vin" placeholder="請輸入 VIN 號碼" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none">
+                                </div>
+
+                                <!-- 出發地 (下拉選單 + 手動輸入) -->
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">出發地 *</label>
+                                    <select id="cat1-origin-select" onchange="toggleCustomOption('cat1-origin-select', 'cat1-origin-custom')" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                        <option value="">-- 請選擇出發地 --</option>
+                                        <option value="工場(八鄉)">工場(八鄉)</option>
+                                        <option value="EMSD - 九龍灣 G/F">EMSD - 九龍灣 G/F</option>
+                                        <option value="EMSD - 九龍灣 1/F">EMSD - 九龍灣 1/F</option>
+                                        <option value="EMSD - 九龍灣 2/F">EMSD - 九龍灣 2/F</option>
+                                        <option value="EMSD - 小蠔灣">EMSD - 小蠔灣</option>
+                                        <option value="EMSD - 屯門">EMSD - 屯門</option>
+                                        <option value="EMSD - 芬園">EMSD - 芬園</option>
+                                        <option value="EMSD - 柴灣">EMSD - 柴灣</option>
+                                        <option value="HKPF - PTU">HKPF - PTU</option>
+                                        <option value="HKPF - 灣仔警總">HKPF - 灣仔警總</option>
+                                        <option value="HKPF - 觀塘警署">HKPF - 觀塘警署</option>
+                                        <option value="HKPF - 石硤尾警總">HKPF - 石硤尾警總</option>
+                                        <option value="將軍澳消防學院">將軍澳消防學院</option>
+                                        <option value="消防維修工程部 - 九龍灣">消防維修工程部 - 九龍灣</option>
+                                        <option value="消防維修工程部 - 北角">消防維修工程部 - 北角</option>
+                                        <option value="消防維修工程部 - 葵涌">消防維修工程部 - 葵涌</option>
+                                        <option value="仁孚 - 思信車場">仁孚 - 思信車場</option>
+                                        <option value="仁孚維修部 - 元朗">仁孚維修部 - 元朗</option>
+                                        <option value="仁孚維修部 - 流浮山">仁孚維修部 - 流浮山</option>
+                                        <option value="仁孚維修部 - 粉嶺">仁孚維修部 - 粉嶺</option>
+                                        <option value="三菱 - 石崗車場">三菱 - 石崗車場</option>
+                                        <option value="三菱 - 新田大昌">三菱 - 新田大昌</option>
+                                        <option value="皇冠 - B1修理部">皇冠 - B1修理部</option>
+                                        <option value="皇冠 - PDI">皇冠 - PDI</option>
+                                        <option value="皇冠 - 大場">皇冠 - 大場</option>
+                                        <option value="皇冠 - 元朗維修部 (豐田)">皇冠 - 元朗維修部 (豐田)</option>
+                                        <option value="復康會 - 大業街車場">復康會 - 大業街車場</option>
+                                        <option value="復康會 - 屯門石排">復康會 - 屯門石排</option>
+                                        <option value="復康會 - 藍田">復康會 - 藍田</option>
+                                        <option value="醫管局 - 九龍醫院">醫管局 - 九龍醫院</option>
+                                        <option value="醫管局 - 沙田醫院">醫管局 - 沙田醫院</option>
+                                        <option value="醫管局 - 東區醫院">醫管局 - 東區醫院</option>
+                                        <option value="醫管局 - 博愛醫院">醫管局 - 博愛醫院</option>
+                                        <option value="醫管局 - 葵涌醫院">醫管局 - 葵涌醫院</option>
+                                        <option value="醫管局 - 瑪嘉烈醫院">醫管局 - 瑪嘉烈醫院</option>
+                                        <option value="醫管局 - 瑪麗醫院">醫管局 - 瑪麗醫院</option>
+                                        <option value="醫管局 - 廣華醫院">醫管局 - 廣華醫院</option>
+                                        <option value="醫管局 - 聯合醫院">醫管局 - 聯合醫院</option>
+                                        <option value="醫管局 - 靈實醫院">醫管局 - 靈實醫院</option>
+                                        <option value="駕駛學院 - 元朗">駕駛學院 - 元朗</option>
+                                        <option value="駕駛學院 - 沙田">駕駛學院 - 沙田</option>
+                                        <option value="王大山 (痴貼紙)">王大山 (痴貼紙)</option>
+                                        <option value="沛哥">沛哥</option>
+                                        <option value="冷氣超 / 豪仔">冷氣超 / 豪仔</option>
+                                        <option value="亞洲車身廠">亞洲車身廠</option>
+                                        <option value="福士廠 - 昂船洲">福士廠 - 昂船洲</option>
+                                        <option value="小欖 - 峻庭">小欖 - 峻庭</option>
+                                        <option value="小欖 - 耀能">小欖 - 耀能</option>
+                                        <option value="青衣驗車中心">青衣驗車中心</option>
+                                        <option value="青衣中電">青衣中電</option>
+                                        <option value="GENTECH">GENTECH</option>
+                                        <option value="MAN廠 (新田)">MAN廠 (新田)</option>
+                                        <option value="九號碼頭">九號碼頭</option>
+                                        <option value="科程">科程</option>
+                                        <option value="舊科程">舊科程</option>
+                                        <option value="偉順防銹">偉順防銹</option>
+                                        <option value="雄哥運輸">雄哥運輸</option>
+                                        <option value="香港紅十字會甘迺迪中心">香港紅十字會甘迺迪中心</option>
+                                        <option value="大埔匡智">大埔匡智</option>
+                                        <option value="other">其他 (手動輸入)</option>
+                                    </select>
+                                    <input type="text" id="cat1-origin-custom" placeholder="請輸入出發地" class="w-full mt-2 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                                </div>
+
+                                <!-- 目的地 (下拉選單 + 手動輸入) -->
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">目的地 *</label>
+                                    <select id="cat1-destination-select" onchange="toggleCustomOption('cat1-destination-select', 'cat1-destination-custom')" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                                        <option value="">-- 請選擇目的地 --</option>
+                                        <option value="工場(八鄉)">工場(八鄉)</option>
+                                        <option value="EMSD - 九龍灣 G/F">EMSD - 九龍灣 G/F</option>
+                                        <option value="EMSD - 九龍灣 1/F">EMSD - 九龍灣 1/F</option>
+                                        <option value="EMSD - 九龍灣 2/F">EMSD - 九龍灣 2/F</option>
+                                        <option value="EMSD - 小蠔灣">EMSD - 小蠔灣</option>
+                                        <option value="EMSD - 屯門">EMSD - 屯門</option>
+                                        <option value="EMSD - 芬園">EMSD - 芬園</option>
+                                        <option value="EMSD - 柴灣">EMSD - 柴灣</option>
+                                        <option value="HKPF - PTU">HKPF - PTU</option>
+                                        <option value="HKPF - 灣仔警總">HKPF - 灣仔警總</option>
+                                        <option value="HKPF - 觀塘警署">HKPF - 觀塘警署</option>
+                                        <option value="HKPF - 石硤尾警總">HKPF - 石硤尾警總</option>
+                                        <option value="將軍澳消防學院">將軍澳消防學院</option>
+                                        <option value="消防維修工程部 - 九龍灣">消防維修工程部 - 九龍灣</option>
+                                        <option value="消防維修工程部 - 北角">消防維修工程部 - 北角</option>
+                                        <option value="消防維修工程部 - 葵涌">消防維修工程部 - 葵涌</option>
+                                        <option value="仁孚 - 思信車場">仁孚 - 思信車場</option>
+                                        <option value="仁孚維修部 - 元朗">仁孚維修部 - 元朗</option>
+                                        <option value="仁孚維修部 - 流浮山">仁孚維修部 - 流浮山</option>
+                                        <option value="仁孚維修部 - 粉嶺">仁孚維修部 - 粉嶺</option>
+                                        <option value="三菱 - 石崗車場">三菱 - 石崗車場</option>
+                                        <option value="三菱 - 新田大昌">三菱 - 新田大昌</option>
+                                        <option value="皇冠 - B1修理部">皇冠 - B1修理部</option>
+                                        <option value="皇冠 - PDI">皇冠 - PDI</option>
+                                        <option value="皇冠 - 大場">皇冠 - 大場</option>
+                                        <option value="皇冠 - 元朗維修部 (豐田)">皇冠 - 元朗維修部 (豐田)</option>
+                                        <option value="復康會 - 大業街車場">復康會 - 大業街車場</option>
+                                        <option value="復康會 - 屯門石排">復康會 - 屯門石排</option>
+                                        <option value="復康會 - 藍田">復康會 - 藍田</option>
+                                        <option value="醫管局 - 九龍醫院">醫管局 - 九龍醫院</option>
+                                        <option value="醫管局 - 沙田醫院">醫管局 - 沙田醫院</option>
+                                        <option value="醫管局 - 東區醫院">醫管局 - 東區醫院</option>
+                                        <option value="醫管局 - 博愛醫院">醫管局 - 博愛醫院</option>
+                                        <option value="醫管局 - 葵涌醫院">醫管局 - 葵涌醫院</option>
+                                        <option value="醫管局 - 瑪嘉烈醫院">醫管局 - 瑪嘉烈醫院</option>
+                                        <option value="醫管局 - 瑪麗醫院">醫管局 - 瑪麗醫院</option>
+                                        <option value="醫管局 - 廣華醫院">醫管局 - 廣華醫院</option>
+                                        <option value="醫管局 - 聯合醫院">醫管局 - 聯合醫院</option>
+                                        <option value="醫管局 - 靈實醫院">醫管局 - 靈實醫院</option>
+                                        <option value="駕駛學院 - 元朗">駕駛學院 - 元朗</option>
+                                        <option value="駕駛學院 - 沙田">駕駛學院 - 沙田</option>
+                                        <option value="王大山 (痴貼紙)">王大山 (痴貼紙)</option>
+                                        <option value="沛哥">沛哥</option>
+                                        <option value="冷氣超 / 豪仔">冷氣超 / 豪仔</option>
+                                        <option value="亞洲車身廠">亞洲車身廠</option>
+                                        <option value="福士廠 - 昂船洲">福士廠 - 昂船洲</option>
+                                        <option value="小欖 - 峻庭">小欖 - 峻庭</option>
+                                        <option value="小欖 - 耀能">小欖 - 耀能</option>
+                                        <option value="青衣驗車中心">青衣驗車中心</option>
+                                        <option value="青衣中電">青衣中電</option>
+                                        <option value="GENTECH">GENTECH</option>
+                                        <option value="MAN廠 (新田)">MAN廠 (新田)</option>
+                                        <option value="九號碼頭">九號碼頭</option>
+                                        <option value="科程">科程</option>
+                                        <option value="舊科程">舊科程</option>
+                                        <option value="偉順防銹">偉順防銹</option>
+                                        <option value="雄哥運輸">雄哥運輸</option>
+                                        <option value="香港紅十字會甘迺迪中心">香港紅十字會甘迺迪中心</option>
+                                        <option value="大埔匡智">大埔匡智</option>
+                                        <option value="other">其他 (手動輸入)</option>
+                                    </select>
+                                    <input type="text" id="cat1-destination-custom" placeholder="請輸入目的地" class="w-full mt-2 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 隨車物品點檢 -->
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                            <div class="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                    <i data-lucide="package-check" class="w-4 h-4 text-emerald-600"></i> 第二部分：隨車物品點檢
+                                </h3>
+                                <button type="button" onclick="addCustomItem('cat1')" class="text-xs bg-slate-800 text-white px-2.5 py-1 rounded-lg hover:bg-slate-700 transition flex items-center gap-1">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> 手動增加項目
+                                </button>
+                            </div>
+                            <div id="cat1-items-list" class="space-y-3">
+                                <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-slate-200">
+                                    <label class="sm:col-span-4 flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                                        <input type="checkbox" data-item-name="車匙" checked class="w-4 h-4 text-blue-600 rounded">
+                                        <span>車匙</span>
+                                    </label>
+                                    <div class="sm:col-span-3"><input type="number" min="0" value="1" placeholder="數量" class="item-qty w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                                    <div class="sm:col-span-5"><input type="text" placeholder="備註 (例如: 主匙1條)" class="item-notes w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-slate-200">
+                                    <label class="sm:col-span-4 flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                                        <input type="checkbox" data-item-name="跟車工具" checked class="w-4 h-4 text-blue-600 rounded">
+                                        <span>跟車工具</span>
+                                    </label>
+                                    <div class="sm:col-span-3"><input type="number" min="0" value="1" placeholder="數量" class="item-qty w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                                    <div class="sm:col-span-5"><input type="text" placeholder="備註 (例如: 工具包1袋)" class="item-notes w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-slate-200">
+                                    <label class="sm:col-span-4 flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                                        <input type="checkbox" data-item-name="備用輪胎" checked class="w-4 h-4 text-blue-600 rounded">
+                                        <span>備用輪胎</span>
+                                    </label>
+                                    <div class="sm:col-span-3"><input type="number" min="0" value="1" placeholder="數量" class="item-qty w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                                    <div class="sm:col-span-5"><input type="text" placeholder="備註 (例如: 位於車底)" class="item-notes w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 車輛狀況 -->
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                            <h3 class="text-sm font-bold text-slate-800 border-b border-slate-200 pb-2 flex items-center gap-2">
+                                <i data-lucide="shield-alert" class="w-4 h-4 text-amber-600"></i> 第三部分：車輛狀況點檢
+                            </h3>
+                            <div class="flex flex-col sm:flex-row gap-4">
+                                <label class="flex items-center gap-2 bg-white p-3 rounded-xl border border-slate-200 flex-1 cursor-pointer">
+                                    <input type="radio" name="cat1-condition" value="normal" checked onchange="toggleCat1Damage(false)" class="w-4 h-4 text-blue-600">
+                                    <span class="text-sm font-bold text-slate-700">1. 車輛內外沒有異常</span>
+                                </label>
+                                <label class="flex items-center gap-2 bg-white p-3 rounded-xl border border-slate-200 flex-1 cursor-pointer">
+                                    <input type="radio" name="cat1-condition" value="abnormal" onchange="toggleCat1Damage(true)" class="w-4 h-4 text-red-600">
+                                    <span class="text-sm font-bold text-red-600">2. 發現異常問題</span>
+                                </label>
+                            </div>
+
+                            <div id="cat1-damage-wrapper" class="hidden space-y-4 pt-2">
+                                <div class="bg-white p-3 rounded-xl border border-slate-200 flex justify-center">
+                                    <svg viewBox="0 0 200 380" class="w-44 h-auto select-none">
+                                        <rect x="35" y="30" width="130" height="320" rx="38" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+                                        <path id="zone-cat1-front" onclick="handleZoneClickCat1('車頭 (Front)', 'zone-cat1-front')" class="car-zone" d="M 45,65 C 45,35 155,35 155,65 L 155,80 L 45,80 Z" fill="#cbd5e1" stroke="#64748b"/>
+                                        <text x="100" y="60" text-anchor="middle" font-size="9.5" fill="#475569" font-weight="bold" pointer-events="none">車頭 Front</text>
+                                        <polygon points="50,85 150,85 140,128 60,128" fill="#93c5fd" opacity="0.45"/>
+                                        <rect id="zone-cat1-fl" onclick="handleZoneClickCat1('左前葉子板', 'zone-cat1-fl')" class="car-zone" x="35" y="85" width="20" height="60" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                        <rect id="zone-cat1-fr" onclick="handleZoneClickCat1('右前葉子板', 'zone-cat1-fr')" class="car-zone" x="145" y="85" width="20" height="60" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                        <rect id="zone-cat1-mid" onclick="handleZoneClickCat1('車頂/車門', 'zone-cat1-mid')" class="car-zone" x="60" y="138" width="80" height="110" rx="6" fill="#cbd5e1" stroke="#64748b"/>
+                                        <text x="100" y="195" text-anchor="middle" font-size="9" fill="#475569" font-weight="bold" pointer-events="none">車頂 / 門框</text>
+                                        <rect id="zone-cat1-ld" onclick="handleZoneClickCat1('左側車門', 'zone-cat1-ld')" class="car-zone" x="35" y="150" width="20" height="85" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                        <rect id="zone-cat1-rd" onclick="handleZoneClickCat1('右側車門', 'zone-cat1-rd')" class="car-zone" x="145" y="150" width="20" height="85" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                        <polygon points="60,253 140,253 148,283 52,283" fill="#93c5fd" opacity="0.45"/>
+                                        <rect id="zone-cat1-rl" onclick="handleZoneClickCat1('左後輪拱/車身', 'zone-cat1-rl')" class="car-zone" x="35" y="240" width="20" height="65" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                        <rect id="zone-cat1-rr" onclick="handleZoneClickCat1('右後輪拱/車身', 'zone-cat1-rr')" class="car-zone" x="145" y="240" width="20" height="65" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                        <path id="zone-cat1-rear" onclick="handleZoneClickCat1('車尾保險槓 (Rear)', 'zone-cat1-rear')" class="car-zone" d="M 45,310 L 155,310 C 155,340 45,340 45,310 Z" fill="#cbd5e1" stroke="#64748b"/>
+                                        <text x="100" y="328" text-anchor="middle" font-size="9.5" fill="#475569" font-weight="bold" pointer-events="none">車尾 Rear</text>
+                                    </svg>
+                                </div>
+                                <div id="cat1-damage-cards" class="space-y-3"></div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">詳細說明與備註</label>
+                                <textarea id="cat1-notes" rows="3" placeholder="填寫更多關於交收狀態或備註細節..." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                            </div>
+                        </div>
+
+                        <!-- 拍照存證 -->
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                            <h3 class="text-sm font-bold text-slate-800 border-b border-slate-200 pb-2 flex items-center gap-2">
+                                <i data-lucide="camera" class="w-4 h-4 text-indigo-600"></i> 第四部分：拍照存證
+                            </h3>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-2">請選擇照片上傳方式：</label>
+                                <div class="flex flex-wrap gap-2">
+                                    <label class="px-3.5 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-blue-700 transition shadow-sm">
+                                        <i data-lucide="camera" class="w-4 h-4"></i> 即時拍照
+                                        <input type="file" accept="image/*" capture="environment" onchange="handleFileSelectDirect(this, 'cat1')" class="hidden">
+                                    </label>
+                                    <label class="px-3.5 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-slate-200 transition border border-slate-300">
+                                        <i data-lucide="image" class="w-4 h-4"></i> 開啟相簿選取
+                                        <input type="file" multiple accept="image/*" onchange="handleFileSelectDirect(this, 'cat1')" class="hidden">
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div id="cat1-paste-zone" tabindex="0" onclick="focusPasteZone('cat1')" class="paste-zone bg-white rounded-xl p-4 text-center cursor-pointer outline-none focus:ring-2 focus:ring-blue-500">
+                                <i data-lucide="clipboard" class="w-6 h-6 text-slate-400 mx-auto mb-1"></i>
+                                <p class="text-xs text-slate-600 font-semibold">電腦版：點擊此處按 <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">Ctrl + V</kbd> 貼上圖片 / 拖曳圖片</p>
+                            </div>
+
+                            <div id="cat1-photo-previews" class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- 第 2 類 表單內容 -->
+                    <div id="cat2-fields" class="space-y-6 hidden">
+                        <div class="bg-red-50/50 p-4 rounded-xl border border-red-200 space-y-4">
+                            <h3 class="text-sm font-bold text-red-900 border-b border-red-200 pb-2 flex items-center gap-2">
+                                <i data-lucide="file-text" class="w-4 h-4 text-red-600"></i> 第一部分：事故基本資訊
+                            </h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div><label class="block text-xs font-semibold text-slate-600 mb-1">T牌號碼 (如適用)</label><input type="text" id="cat2-t-plate" placeholder="例如：T1234" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-red-400 outline-none"></div>
+                                <div><label class="block text-xs font-semibold text-slate-600 mb-1">員工姓名 *</label><input type="text" id="cat2-driver" placeholder="請輸入全名" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"></div>
+                                <div><label class="block text-xs font-semibold text-slate-600 mb-1">車輛型號 *</label><input type="text" id="cat2-model" placeholder="例如：Toyota Hiace" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"></div>
+                                <div><label class="block text-xs font-semibold text-slate-600 mb-1">車牌 / 底盤號碼 (VIN) *</label><input type="text" id="cat2-plate-vin" placeholder="例如：AB1234 / VIN..." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-red-400 outline-none"></div>
+                                <div><label class="block text-xs font-semibold text-slate-600 mb-1">事故日期時間 *</label><input type="datetime-local" id="cat2-datetime" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"></div>
+                                <div><label class="block text-xs font-semibold text-slate-600 mb-1">事故地點 *</label><input type="text" id="cat2-location" placeholder="例如：觀塘道與開源道交界" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"></div>
+                            </div>
+                        </div>
+
+                        <!-- 受損部位 -->
+                        <div class="bg-red-50/50 p-4 rounded-xl border border-red-200 space-y-4">
+                            <h3 class="text-sm font-bold text-red-900 border-b border-red-200 pb-2 flex items-center gap-2">
+                                <i data-lucide="alert-circle" class="w-4 h-4 text-red-600"></i> 第二部分：受損部位點選與描述
+                            </h3>
+                            <div class="bg-white p-3 rounded-xl border border-slate-200 flex justify-center">
+                                <svg viewBox="0 0 200 380" class="w-44 h-auto select-none">
+                                    <rect x="35" y="30" width="130" height="320" rx="38" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+                                    <path id="zone-cat2-front" onclick="handleZoneClickCat2('車頭 (Front)', 'zone-cat2-front')" class="car-zone" d="M 45,65 C 45,35 155,35 155,65 L 155,80 L 45,80 Z" fill="#cbd5e1" stroke="#64748b"/>
+                                    <text x="100" y="60" text-anchor="middle" font-size="9.5" fill="#475569" font-weight="bold" pointer-events="none">車頭 Front</text>
+                                    <polygon points="50,85 150,85 140,128 60,128" fill="#93c5fd" opacity="0.45"/>
+                                    <rect id="zone-cat2-fl" onclick="handleZoneClickCat2('左前葉子板', 'zone-cat2-fl')" class="car-zone" x="35" y="85" width="20" height="60" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                    <rect id="zone-cat2-fr" onclick="handleZoneClickCat2('右前葉子板', 'zone-cat2-fr')" class="car-zone" x="145" y="85" width="20" height="60" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                    <rect id="zone-cat2-mid" onclick="handleZoneClickCat2('車頂/車門', 'zone-cat2-mid')" class="car-zone" x="60" y="138" width="80" height="110" rx="6" fill="#cbd5e1" stroke="#64748b"/>
+                                    <text x="100" y="195" text-anchor="middle" font-size="9" fill="#475569" font-weight="bold" pointer-events="none">車頂 / 門框</text>
+                                    <rect id="zone-cat2-ld" onclick="handleZoneClickCat2('左側車門', 'zone-cat2-ld')" class="car-zone" x="35" y="150" width="20" height="85" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                    <rect id="zone-cat2-rd" onclick="handleZoneClickCat2('右側車門', 'zone-cat2-rd')" class="car-zone" x="145" y="150" width="20" height="85" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                    <polygon points="60,253 140,253 148,283 52,283" fill="#93c5fd" opacity="0.45"/>
+                                    <rect id="zone-cat2-rl" onclick="handleZoneClickCat2('左後輪拱/車身', 'zone-cat2-rl')" class="car-zone" x="35" y="240" width="20" height="65" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                    <rect id="zone-cat2-rr" onclick="handleZoneClickCat2('右後輪拱/車身', 'zone-cat2-rr')" class="car-zone" x="145" y="240" width="20" height="65" rx="3" fill="#cbd5e1" stroke="#64748b"/>
+                                    <path id="zone-cat2-rear" onclick="handleZoneClickCat2('車尾保險槓 (Rear)', 'zone-cat2-rear')" class="car-zone" d="M 45,310 L 155,310 C 155,340 45,340 45,310 Z" fill="#cbd5e1" stroke="#64748b"/>
+                                    <text x="100" y="328" text-anchor="middle" font-size="9.5" fill="#475569" font-weight="bold" pointer-events="none">車尾 Rear</text>
+                                </svg>
+                            </div>
+                            <div id="cat2-damage-cards" class="space-y-3"></div>
+                        </div>
+
+                        <!-- 拍照存證 -->
+                        <div class="bg-red-50/50 p-4 rounded-xl border border-red-200 space-y-3">
+                            <h3 class="text-sm font-bold text-red-900 border-b border-red-200 pb-2 flex items-center gap-2">
+                                <i data-lucide="camera" class="w-4 h-4 text-red-600"></i> 第三部分：現場拍照存證
+                            </h3>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-2">請選擇照片上傳方式：</label>
+                                <div class="flex flex-wrap gap-2">
+                                    <label class="px-3.5 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-red-700 transition shadow-sm">
+                                        <i data-lucide="camera" class="w-4 h-4"></i> 即時拍照
+                                        <input type="file" accept="image/*" capture="environment" onchange="handleFileSelectDirect(this, 'cat2')" class="hidden">
+                                    </label>
+                                    <label class="px-3.5 py-2 bg-white text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-slate-100 transition border border-slate-300">
+                                        <i data-lucide="image" class="w-4 h-4"></i> 開啟相簿選取
+                                        <input type="file" multiple accept="image/*" onchange="handleFileSelectDirect(this, 'cat2')" class="hidden">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div id="cat2-paste-zone" tabindex="0" onclick="focusPasteZone('cat2')" class="paste-zone bg-white rounded-xl p-4 text-center cursor-pointer outline-none focus:ring-2 focus:ring-red-400">
+                                <i data-lucide="clipboard" class="w-6 h-6 text-slate-400 mx-auto mb-1"></i>
+                                <p class="text-xs text-slate-600 font-semibold">電腦版：點擊此處按 <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded font-mono text-[10px]">Ctrl + V</kbd> 貼上圖片 / 拖曳圖片</p>
+                            </div>
+
+                            <div id="cat2-photo-previews" class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2"></div>
+                        </div>
+
+                        <!-- 事故說明 -->
+                        <div class="bg-red-50/50 p-4 rounded-xl border border-red-200 space-y-4">
+                            <h3 class="text-sm font-bold text-red-900 border-b border-red-200 pb-2 flex items-center gap-2">
+                                <i data-lucide="help-circle" class="w-4 h-4 text-red-600"></i> 第四部分：事故詳細說明與後續處置
+                            </h3>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">詳細說明與事故經過 *</label>
+                                <textarea id="cat2-desc" rows="3" placeholder="請詳細寫下事故發生的過程與現場狀況..." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none"></textarea>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">是否已通知主管？ *</label>
+                                    <select id="cat2-notified" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"><option value="是">是</option><option value="否">否</option></select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">通報的主管姓名</label>
+                                    <input type="text" id="cat2-manager" placeholder="例如：張主管" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-400 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">有否報警？ *</label>
+                                    <select id="cat2-policed" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"><option value="否">否</option><option value="是">是 (請在底下說明補充報案編號)</option></select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 提交按鈕 -->
+                    <div class="flex items-center justify-end pt-4 border-t border-slate-100">
+                        <button type="submit" id="submit-btn" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-sm transition flex items-center gap-2">
+                            <i data-lucide="send" class="w-4 h-4"></i> 確認並提交雲端
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+
+        <!-- ==================== 主管後台端 ==================== -->
+        <section id="view-admin" class="space-y-6 hidden">
+            <div id="admin-login-box" class="max-w-md mx-auto bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center space-y-4">
+                <div class="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mx-auto"><i data-lucide="lock" class="w-6 h-6"></i></div>
+                <h3 class="text-base font-bold text-slate-900">主管後台登入驗證</h3>
+                <input type="password" id="admin-pin" placeholder="請輸入主管 PIN 碼" class="w-full text-center tracking-widest text-lg font-mono px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none">
+                <button onclick="verifyAdminPin()" class="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-xl transition">登入後台</button>
+            </div>
+
+            <div id="admin-dashboard" class="space-y-6 hidden">
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button onclick="setAdminTab('reports')" id="tab-btn-reports" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white">所有案件審核</button>
+                        <button onclick="setAdminTab('search')" id="tab-btn-search" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200">車輛搜查 (Vehicle Search)</button>
+                        <button onclick="setAdminTab('summary')" id="tab-btn-summary" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200">T 牌行駛歷程 Summary</button>
+                    </div>
+                    <button onclick="fetchReportsFromFirebase()" class="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition flex items-center gap-1.5">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 重新整理雲端數據
+                    </button>
+                </div>
+
+                <!-- 案件審核面板 -->
+                <div id="admin-panel-reports" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
+                    <div class="flex items-center gap-2 overflow-x-auto pb-2">
+                        <button onclick="setFilter('cat1')" id="btn-filter-cat1" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-white whitespace-nowrap">第1類：日常交收</button>
+                        <button onclick="setFilter('cat2')" id="btn-filter-cat2" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 whitespace-nowrap">第2類：車輛損壞</button>
+                        <button onclick="setFilter('pending')" id="btn-filter-pending" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 whitespace-nowrap">待審核 (僅第2類)</button>
+                    </div>
+                    <div id="admin-report-list" class="space-y-3"></div>
+                </div>
+
+                <!-- 車輛搜查頁面板 -->
+                <div id="admin-panel-search" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 hidden">
+                    <div class="border-b border-slate-100 pb-4">
+                        <h3 class="text-base font-bold text-slate-900 flex items-center gap-2"><i data-lucide="search" class="w-5 h-5 text-blue-600"></i> 車輛歷史運送紀錄搜查</h3>
+                        <p class="text-xs text-slate-500 mt-1">輸入「車牌」或「底盤號碼 (VIN)」即可搜查所有相關運送紀錄。</p>
+                    </div>
+                    <div class="flex gap-2 max-w-md">
+                        <input type="text" id="vehicle-search-input" placeholder="請輸入車牌 或 VIN..." onkeyup="if(event.key==='Enter') searchVehicleRecords()" class="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none">
+                        <button onclick="searchVehicleRecords()" class="px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-xl hover:bg-blue-700 transition flex items-center gap-1 whitespace-nowrap"><i data-lucide="search" class="w-4 h-4"></i> 搜查</button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr class="bg-slate-100 text-slate-700 border-b border-slate-200">
+                                    <th class="p-2.5">日期</th><th class="p-2.5">T牌</th><th class="p-2.5">司機/員工</th><th class="p-2.5">車牌/VIN</th><th class="p-2.5">出發地</th><th class="p-2.5">目的地</th>
+                                </tr>
+                            </thead>
+                            <tbody id="vehicle-search-tbody" class="divide-y divide-slate-100">
+                                <tr><td colspan="6" class="p-4 text-center text-slate-400">請在上方輸入搜尋條件。</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Summary 面板 -->
+                <div id="admin-panel-summary" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6 hidden">
+                    <div class="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900 flex items-center gap-2"><i data-lucide="history" class="w-5 h-5 text-blue-600"></i> T 牌號碼行駛歷程彙整 (Summary)</h3>
+                        </div>
+                        <div class="flex items-center gap-2 w-full sm:w-auto">
+                            <select id="summary-t-select" onchange="renderTSummary()" class="px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold font-mono bg-slate-50 outline-none">
+                                <option value="">-- 請選擇 T 牌號碼 --</option>
+                            </select>
+                            <button onclick="exportTSummaryCSV()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1.5 whitespace-nowrap"><i data-lucide="file-spreadsheet" class="w-4 h-4"></i> 匯出 CSV</button>
+                            <button onclick="exportTSummaryPDF()" class="px-3.5 py-2 bg-blue-600 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1.5 whitespace-nowrap"><i data-lucide="file-down" class="w-4 h-4"></i> 匯出 PDF</button>
+                        </div>
+                    </div>
+                    <div id="summary-pdf-area" class="space-y-4">
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-200 flex justify-between items-center">
+                            <div><h4 class="font-bold text-sm text-slate-800">T 牌專屬行駛歷程報告</h4><p class="text-xs text-slate-500">目標 T 牌：<span id="summary-target-plate" class="font-mono font-bold text-blue-600">未選取</span></p></div>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-xs border-collapse">
+                                <thead>
+                                    <tr class="bg-slate-100 text-slate-700 border-b border-slate-200">
+                                        <th class="p-2.5">日期時間</th><th class="p-2.5">司機/員工姓名</th><th class="p-2.5">客人/部門</th><th class="p-2.5">車輛品牌/型號</th><th class="p-2.5">車牌/底盤號碼 (VIN)</th><th class="p-2.5">出發地</th><th class="p-2.5">目的地</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="summary-table-body" class="divide-y divide-slate-100">
+                                    <tr><td colspan="7" class="p-4 text-center text-slate-400">請從上方選擇 T 牌號碼以載入行駛歷程。</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-slate-900 text-slate-400 text-xs text-center py-4 mt-auto no-print border-t border-slate-800">
+        2026 - New Tech Motor Engineering Limited
+    </footer>
+
+    <!-- 提交成功彈窗 (摘要複製) -->
+    <div id="success-copy-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 text-center">
+            <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                <i data-lucide="check-circle" class="w-7 h-7"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-900">申報成功提交！</h3>
+            <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-left text-xs font-mono space-y-1 text-slate-700" id="copy-summary-text">
+            </div>
+            <div class="flex items-center gap-2 pt-2">
+                <button onclick="copySummaryText()" class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5">
+                    <i data-lucide="copy" class="w-4 h-4"></i> 複製摘要訊息
+                </button>
+                <button onclick="closeSuccessModal()" class="px-4 py-2.5 bg-slate-200 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-300 transition">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 正式文件 Modal -->
+    <div id="admin-detail-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-4 no-print">
+                <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2"><i data-lucide="file-text" class="w-5 h-5 text-blue-600"></i> 申報單據詳情與正式報告管理</h3>
+                <button onclick="closeAdminDetailModal()" class="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+
+            <div id="pdf-report-card" class="space-y-4 text-xs p-4 bg-white border border-slate-300 rounded-lg shadow-sm">
+                <!-- 公司 Header -->
+                <div class="border-b-2 border-slate-900 pb-3 flex justify-between items-start">
+                    <div>
+                        <h1 class="text-xl font-black text-slate-900 tracking-wide uppercase">新力機械有限公司</h1>
+                        <h2 class="text-xs font-bold text-slate-600 uppercase">New Tech Motor Engineering Limited</h2>
+                        <p id="modal-pdf-type" class="text-xs font-semibold text-blue-700 mt-1">申報類別：--</p>
+                    </div>
+                    <div class="text-right">
+                        <div class="bg-slate-100 px-3 py-1 rounded border border-slate-200">
+                            <span class="text-[10px] text-slate-500 block">單據編號</span>
+                            <span id="modal-report-id" class="font-mono font-bold text-base text-blue-600">--</span>
+                        </div>
+                        <p id="modal-timestamp" class="text-[10px] text-slate-400 mt-1">--</p>
+                    </div>
+                </div>
+
+                <div id="modal-main-content" class="space-y-4"></div>
+
+                <!-- 第 2 類 審核區域 -->
+                <div id="modal-audit-section" class="border-t border-slate-200 pt-4 space-y-3 hidden">
+                    <h4 class="font-bold text-slate-900 text-xs flex items-center gap-1.5"><i data-lucide="check-circle-2" class="w-4 h-4 text-green-600"></i> 主管審核與責任判定 (僅第 2 類)</h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-500 mb-1">責任歸屬</label>
+                            <select id="edit-verdict-responsibility" class="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                <option value="正常無損 (Normal)">正常無損 (Normal)</option>
+                                <option value="自然損耗 / 機械老化">自然損耗 / 機械老化</option>
+                                <option value="司機疏忽 / 應負賠償責任">司機疏忽 / 應負賠償責任</option>
+                                <option value="第三方責任 / 交通意外">第三方責任 / 交通意外</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-500 mb-1">審核狀態</label>
+                            <select id="edit-verdict-status" class="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                <option value="approved">已審核通過 (Approved)</option>
+                                <option value="rejected">需修正或退回 (Rejected)</option>
+                                <option value="pending">維持待審核 (Pending)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 簽署欄 -->
+                <div class="border-t border-slate-300 pt-6 mt-6 grid grid-cols-2 gap-8">
+                    <div class="space-y-8"><div class="border-b border-slate-400 h-10"></div><p class="text-[11px] font-bold text-slate-700 text-center">當事員工 / 司機簽署</p></div>
+                    <div class="space-y-8"><div class="border-b border-slate-400 h-10"></div><p class="text-[11px] font-bold text-slate-700 text-center">主管審核簽署 confirm</p></div>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-4 border-t border-slate-100 no-print">
+                <div class="flex items-center gap-2">
+                    <button onclick="deleteCurrentReport()" class="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold rounded-xl border border-red-200 transition flex items-center gap-1.5"><i data-lucide="trash-2" class="w-4 h-4"></i> 刪除申報單</button>
+                    <button onclick="exportSinglePDF()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-xl transition flex items-center gap-1.5"><i data-lucide="file-down" class="w-4 h-4"></i> 匯出 PDF 報告</button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="closeAdminDetailModal()" class="px-4 py-2 border border-slate-300 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-50 transition">關閉</button>
+                    <button onclick="saveAdminChanges()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-sm transition flex items-center gap-1.5"><i data-lucide="save" class="w-4 h-4"></i> 儲存修改內容</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+        // 1. Firebase 初始化設定 (請填入你自己的 Firebase 專案設定)
+          apiKey: "AIzaSyAVSqdFFoepdwrRtxGjyoSBPwHlfxORGd8",
+  authDomain: "newtech-system.firebaseapp.com",
+  projectId: "newtech-system",
+  storageBucket: "newtech-system.firebasestorage.app",
+  messagingSenderId: "871887832252",
+  appId: "1:871887832252:web:1f67972ce9ab9b7887fcb9",
+  measurementId: "G-HTDDDS2755"
+  };
+
+        // 保留：Google Drive GAS 網址（相片儲存完全不受影響）
+        const GOOGLE_DRIVE_GAS_URL = 'https://script.google.com/macros/s/AKfycbzJNJjV_ZN4rfmrvENUhE3QEHN76tWiX8Q22BuAMysYJRToPguCf41ZGSo1JmIhkaT-ow/exec';
+
+        let db = null;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+        } catch (e) {
+            console.error("Firebase 初始化失敗:", e);
+        }
+
+        let currentCategory = 1;
+        let reportsDatabase = [];
+        let cat1DamageRecords = [];
+        let cat2DamageRecords = [];
+        let activeAdminReportId = null;
+        let currentFilter = 'cat1';
+        let latestSummaryRawText = '';
+
+        const photoStores = { cat1: [], cat2: [] };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            fetchReportsFromFirebase();
+            setupPasteAndDragListeners('cat1');
+            setupPasteAndDragListeners('cat2');
+            addCustomItem('cat1', true);
+        });
+
+        // 通用：控制「其他 (手動輸入)」輸入框的開關
+        function toggleCustomOption(selectId, customInputId) {
+            const select = document.getElementById(selectId);
+            const customInput = document.getElementById(customInputId);
+            if (select.value === 'other') {
+                customInput.classList.remove('hidden');
+            } else {
+                customInput.classList.add('hidden');
+                customInput.value = '';
+            }
+        }
+
+        // 通用：獲取下拉選單或手動輸入框的真實數值
+        function getSelectOrCustomValue(selectId, customInputId) {
+            const select = document.getElementById(selectId);
+            const customInput = document.getElementById(customInputId);
+            if (!select) return '';
+            if (select.value === 'other') {
+                return customInput ? customInput.value.trim() : '';
+            }
+            return select.value;
+        }
+
+        function toggleBrandCustom(catPrefix) {
+            toggleCustomOption(`${catPrefix}-brand-select`, `${catPrefix}-brand-custom`);
+        }
+
+        function setupPasteAndDragListeners(catPrefix) {
+            const zone = document.getElementById(`${catPrefix}-paste-zone`);
+            zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+            zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('dragover');
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    addFilesToStore(catPrefix, Array.from(e.dataTransfer.files));
+                }
+            });
+            zone.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                const pastedFiles = [];
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf('image') !== -1) {
+                        const blob = items[i].getAsFile();
+                        if (blob) pastedFiles.push(new File([blob], `pasted_image_${Date.now()}_${i}.png`, { type: blob.type }));
+                    }
+                }
+                if (pastedFiles.length > 0) addFilesToStore(catPrefix, pastedFiles);
+            });
+        }
+
+        function focusPasteZone(catPrefix) { document.getElementById(`${catPrefix}-paste-zone`).focus(); }
+
+        function handleFileSelectDirect(inputEl, catPrefix) {
+            if (inputEl.files && inputEl.files.length > 0) {
+                addFilesToStore(catPrefix, Array.from(inputEl.files));
+                inputEl.value = '';
+            }
+        }
+
+        function addFilesToStore(catPrefix, files) {
+            photoStores[catPrefix].push(...files.filter(f => f.type.startsWith('image/')));
+            renderPhotoPreviews(catPrefix);
+        }
+
+        function removePhoto(catPrefix, index) {
+            photoStores[catPrefix].splice(index, 1);
+            renderPhotoPreviews(catPrefix);
+        }
+
+        function renderPhotoPreviews(catPrefix) {
+            const container = document.getElementById(`${catPrefix}-photo-previews`);
+            container.innerHTML = photoStores[catPrefix].map((file, idx) => `
+                <div class="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-100 aspect-video">
+                    <img src="${URL.createObjectURL(file)}" class="w-full h-full object-cover">
+                    <button type="button" onclick="removePhoto('${catPrefix}', ${idx})" class="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 shadow"><i data-lucide="x" class="w-3 h-3"></i></button>
+                    <span class="absolute bottom-0 left-0 right-0 bg-slate-900/60 text-white text-[9px] px-1 py-0.5 truncate">${file.name}</span>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function setCategory(cat) {
+            currentCategory = cat;
+            const btn1 = document.getElementById('cat-btn-1');
+            const btn2 = document.getElementById('cat-btn-2');
+            const fields1 = document.getElementById('cat1-fields');
+            const fields2 = document.getElementById('cat2-fields');
+
+            if (cat === 1) {
+                btn1.className = "p-4 rounded-xl border-2 border-blue-600 bg-blue-50 text-blue-900 font-bold flex items-center justify-center gap-3 shadow-sm transition";
+                btn2.className = "p-4 rounded-xl border-2 border-slate-200 bg-slate-50 text-slate-600 font-bold flex items-center justify-center gap-3 transition";
+                fields1.classList.remove('hidden');
+                fields2.classList.add('hidden');
+            } else {
+                btn2.className = "p-4 rounded-xl border-2 border-red-600 bg-red-50 text-red-900 font-bold flex items-center justify-center gap-3 shadow-sm transition";
+                btn1.className = "p-4 rounded-xl border-2 border-slate-200 bg-slate-50 text-slate-600 font-bold flex items-center justify-center gap-3 transition";
+                fields2.classList.remove('hidden');
+                fields1.classList.add('hidden');
+            }
+            lucide.createIcons();
+        }
+
+        function addCustomItem(catPrefix, isDefault = false) {
+            const container = document.getElementById(`${catPrefix}-items-list`);
+            const div = document.createElement('div');
+            div.className = "grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-slate-200";
+            div.innerHTML = `
+                <div class="sm:col-span-4 flex items-center gap-2">
+                    <input type="checkbox" checked class="w-4 h-4 text-blue-600 rounded">
+                    <input type="text" placeholder="${isDefault ? '其他隨車物品 (可留空)' : '請輸入物品名稱'}" class="custom-item-name w-full px-2 py-1 border border-slate-300 rounded text-xs font-bold text-slate-700">
+                </div>
+                <div class="sm:col-span-3"><input type="number" min="0" value="1" placeholder="數量" class="item-qty w-full px-2.5 py-1 border border-slate-300 rounded text-xs"></div>
+                <div class="sm:col-span-5 flex items-center gap-2">
+                    <input type="text" placeholder="備註" class="item-notes w-full px-2.5 py-1 border border-slate-300 rounded text-xs">
+                    <button type="button" onclick="this.parentElement.parentElement.remove()" class="text-slate-400 hover:text-red-500 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+            `;
+            container.appendChild(div);
+            lucide.createIcons();
+        }
+
+        function toggleCat1Damage(show) {
+            const wrapper = document.getElementById('cat1-damage-wrapper');
+            if (show) wrapper.classList.remove('hidden');
+            else wrapper.classList.add('hidden');
+        }
+
+        function handleZoneClickCat1(zoneName, elementId) {
+            const svgEl = document.getElementById(elementId);
+            const idx = cat1DamageRecords.findIndex(r => r.zoneId === elementId);
+            if (idx === -1) {
+                cat1DamageRecords.push({ zoneId: elementId, zoneName: zoneName, types: ['刮花'], desc: '' });
+                if (svgEl) svgEl.classList.add('active-damage');
+            }
+            renderDamageCards('cat1');
+        }
+
+        function handleZoneClickCat2(zoneName, elementId) {
+            const svgEl = document.getElementById(elementId);
+            const idx = cat2DamageRecords.findIndex(r => r.zoneId === elementId);
+            if (idx === -1) {
+                cat2DamageRecords.push({ zoneId: elementId, zoneName: zoneName, types: ['凹陷'], desc: '' });
+                if (svgEl) svgEl.classList.add('active-damage');
+            }
+            renderDamageCards('cat2');
+        }
+
+        function renderDamageCards(catPrefix) {
+            const container = document.getElementById(`${catPrefix}-damage-cards`);
+            const records = catPrefix === 'cat1' ? cat1DamageRecords : cat2DamageRecords;
+            const availableTypes = ['刮花', '凹陷', '破裂', '掉漆', '變形'];
+
+            container.innerHTML = records.map(item => `
+                <div class="bg-red-50 border border-red-200 rounded-xl p-3 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold text-xs text-red-900">${item.zoneName}</span>
+                        <button type="button" onclick="removeDamageRecord('${catPrefix}', '${item.zoneId}')" class="text-xs text-red-600 hover:underline">移除</button>
+                    </div>
+                    <div class="flex flex-wrap gap-1">
+                        ${availableTypes.map(t => `
+                            <label class="text-[11px] px-2 py-0.5 rounded border ${item.types.includes(t) ? 'bg-red-600 text-white' : 'bg-white text-slate-600'} cursor-pointer">
+                                <input type="checkbox" class="hidden" ${item.types.includes(t) ? 'checked' : ''} onchange="toggleDamageType('${catPrefix}', '${item.zoneId}', '${t}', this.checked)">
+                                ${t}
+                            </label>
+                        `).join('')}
+                    </div>
+                    <input type="text" value="${item.desc}" oninput="updateDamageDesc('${catPrefix}', '${item.zoneId}', this.value)" placeholder="獨立情況描述 (例如: 刮痕 5cm)" class="w-full text-xs p-1.5 border border-slate-300 rounded bg-white">
+                </div>
+            `).join('');
+        }
+
+        function toggleDamageType(catPrefix, zoneId, typeName, isChecked) {
+            const records = catPrefix === 'cat1' ? cat1DamageRecords : cat2DamageRecords;
+            const target = records.find(r => r.zoneId === zoneId);
+            if (!target) return;
+            if (isChecked && !target.types.includes(typeName)) target.types.push(typeName);
+            else if (!isChecked) target.types = target.types.filter(t => t !== typeName);
+            renderDamageCards(catPrefix);
+        }
+
+        function updateDamageDesc(catPrefix, zoneId, val) {
+            const records = catPrefix === 'cat1' ? cat1DamageRecords : cat2DamageRecords;
+            const target = records.find(r => r.zoneId === zoneId);
+            if (target) target.desc = val;
+        }
+
+        function removeDamageRecord(catPrefix, zoneId) {
+            if (catPrefix === 'cat1') cat1DamageRecords = cat1DamageRecords.filter(r => r.zoneId !== zoneId);
+            else cat2DamageRecords = cat2DamageRecords.filter(r => r.zoneId !== zoneId);
+            const svgEl = document.getElementById(zoneId);
+            if (svgEl) svgEl.classList.remove('active-damage');
+            renderDamageCards(catPrefix);
+        }
+
+        // 提交表單至 Firebase 與上傳相片至 Google Drive
+        async function submitReport(e) {
+            e.preventDefault();
+
+            let driverVal = '';
+            let deptVal = '';
+            let brandVal = '';
+            let modelVal = '';
+            let plateVal = '';
+            let originVal = '';
+            let destinationVal = '';
+
+            if (currentCategory === 1) {
+                const tPlate = document.getElementById('cat1-t-plate').value;
+                driverVal = getSelectOrCustomValue('cat1-driver-select', 'cat1-driver-custom');
+                deptVal = getSelectOrCustomValue('cat1-dept-select', 'cat1-dept-custom');
+                brandVal = getSelectOrCustomValue('cat1-brand-select', 'cat1-brand-custom');
+
+                modelVal = document.getElementById('cat1-model').value.trim();
+                plateVal = document.getElementById('cat1-plate').value.trim();
+
+                originVal = getSelectOrCustomValue('cat1-origin-select', 'cat1-origin-custom');
+                destinationVal = getSelectOrCustomValue('cat1-destination-select', 'cat1-destination-custom');
+                
+                if (!tPlate) { alert('請選擇 T 牌號碼！'); return; }
+                if (!driverVal) { alert('請選擇或輸入司機/員工姓名！'); return; }
+                if (!brandVal) { alert('請選擇或輸入車輛品牌！'); return; }
+                
+                if (!modelVal && !plateVal) {
+                    alert('「型號」與「車牌」請至少填寫其中一項！');
+                    return;
+                }
+
+                if (!originVal) { alert('請選擇或輸入出發地！'); return; }
+                if (!destinationVal) { alert('請選擇或輸入目的地！'); return; }
+            } else {
+                const driver = document.getElementById('cat2-driver').value.trim();
+                const model = document.getElementById('cat2-model').value.trim();
+                const plateVin = document.getElementById('cat2-plate-vin').value.trim();
+                const dt = document.getElementById('cat2-datetime').value;
+                const loc = document.getElementById('cat2-location').value.trim();
+                const desc = document.getElementById('cat2-desc').value.trim();
+                if (!driver) { alert('請輸入員工姓名！'); return; }
+                if (!model) { alert('請輸入車輛型號！'); return; }
+                if (!plateVin) { alert('請輸入車牌/底盤號碼 (VIN)！'); return; }
+                if (!dt) { alert('請選擇事故日期時間！'); return; }
+                if (!loc) { alert('請輸入事故地點！'); return; }
+                if (!desc) { alert('請填寫事故詳細說明與經過！'); return; }
+            }
+
+            const submitBtn = document.getElementById('submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+
+            const nowIso = new Date().toISOString();
+            let payload = { category: currentCategory, created_at: nowIso, status: 'pending' };
+
+            if (currentCategory === 1) {
+                const itemsList = [];
+                document.querySelectorAll('#cat1-items-list > div').forEach(el => {
+                    const cb = el.querySelector('input[type="checkbox"]');
+                    const customNameInput = el.querySelector('.custom-item-name');
+                    const itemName = customNameInput ? customNameInput.value.trim() : cb.getAttribute('data-item-name');
+                    const qty = el.querySelector('.item-qty').value;
+                    const notes = el.querySelector('.item-notes').value;
+                    if (cb && itemName) itemsList.push({ name: itemName, checked: cb.checked, qty, notes });
+                });
+
+                payload.t_plate = document.getElementById('cat1-t-plate').value;
+                payload.driver = driverVal;
+                payload.customer_dept = deptVal;
+                payload.brand = brandVal;
+                payload.model = modelVal;
+                payload.plate = plateVal;
+                payload.vin = document.getElementById('cat1-vin').value.trim();
+                payload.origin = originVal;
+                payload.destination = destinationVal;
+                payload.items_checklist = itemsList;
+                payload.condition = document.querySelector('input[name="cat1-condition"]:checked').value;
+                payload.damage_items = payload.condition === 'abnormal' ? cat1DamageRecords : [];
+                payload.description = document.getElementById('cat1-notes').value.trim();
+            } else {
+                payload.t_plate = document.getElementById('cat2-t-plate').value.trim().toUpperCase();
+                payload.driver = document.getElementById('cat2-driver').value.trim();
+                payload.model = document.getElementById('cat2-model').value.trim();
+                payload.plate_vin = document.getElementById('cat2-plate-vin').value.trim();
+                payload.incident_datetime = document.getElementById('cat2-datetime').value;
+                payload.location = document.getElementById('cat2-location').value.trim();
+                payload.damage_items = cat2DamageRecords;
+                payload.description = document.getElementById('cat2-desc').value.trim();
+                payload.notified_manager = document.getElementById('cat2-notified').value;
+                payload.manager_name = document.getElementById('cat2-manager').value.trim();
+                payload.policed = document.getElementById('cat2-policed').value;
+            }
+
+            // 保留：上傳照片至 Google Drive 的全套邏輯
+            const photosToUpload = currentCategory === 1 ? photoStores.cat1 : photoStores.cat2;
+            if (photosToUpload.length > 0) {
+                submitBtn.textContent = '相片上傳至 Drive 中...';
+                const dateStr = nowIso.slice(0, 10);
+                const tPlateStr = payload.t_plate || '無T牌';
+                const driverStr = payload.driver || '無司機';
+                const brandStr = payload.brand || '無品牌';
+                const folderName = `${dateStr}_${tPlateStr}_${driverStr}_${brandStr}`;
+                await uploadPhotosViaForm(photosToUpload, folderName);
+            }
+
+            let newReportId = '';
+            // 改為：寫入 Firebase Firestore
+            if (db) {
+                try {
+                    const docRef = await db.collection("vehicle_reports").add(payload);
+                    newReportId = docRef.id;
+                } catch (error) {
+                    alert("寫入 Firebase 失敗: " + error.message);
+                }
+            }
+
+            submitBtn.disabled = false;
+            submitBtn.textContent = '確認並提交雲端';
+
+            let pvParts = [];
+            if (payload.plate) pvParts.push(`車牌: ${payload.plate}`);
+            if (payload.vin) pvParts.push(`VIN: ${payload.vin}`);
+            if (payload.plate_vin) pvParts.push(`車牌/VIN: ${payload.plate_vin}`);
+            const pvStr = pvParts.length > 0 ? pvParts.join(' / ') : '無填寫車牌/VIN';
+
+            latestSummaryRawText = [
+                `單號：${newReportId || 'NTL-DR-XXXXX'}`,
+                `T牌：${payload.t_plate || '--'}`,
+                `車牌/VIN：${pvStr}`,
+                `品牌：${payload.brand || '--'}`,
+                `型號：${payload.model || '--'}`,
+                `路線：${payload.origin || payload.location || '--'} 至 ${payload.destination || '--'}`
+            ].join('\n');
+
+            showSuccessCopyModal(latestSummaryRawText);
+            
+            document.getElementById('report-form').reset();
+            
+            ['cat1-driver-custom', 'cat1-dept-custom', 'cat1-brand-custom', 'cat1-origin-custom', 'cat1-destination-custom'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
+
+            photoStores.cat1 = [];
+            photoStores.cat2 = [];
+            renderPhotoPreviews('cat1');
+            renderPhotoPreviews('cat2');
+            
+            fetchReportsFromFirebase();
+        }
+
+        function showSuccessCopyModal(summaryText) {
+            const container = document.getElementById('copy-summary-text');
+            container.innerText = summaryText;
+            document.getElementById('success-copy-modal').classList.remove('hidden');
+        }
+
+        function closeSuccessModal() {
+            document.getElementById('success-copy-modal').classList.add('hidden');
+        }
+
+        function copySummaryText() {
+            navigator.clipboard.writeText(latestSummaryRawText).then(() => {
+                alert('摘要訊息已成功複製到剪貼簿！');
+            }).catch(() => {
+                alert('複製失敗，請手動選取複製。');
+            });
+        }
+
+        // 100% 保留：上傳照片至 Google Drive 的 GAS Form 機制
+        async function uploadPhotosViaForm(files, folderName) {
+            const form = document.getElementById('gas-upload-form');
+            form.action = GOOGLE_DRIVE_GAS_URL;
+
+            const filesArray = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                try {
+                    const base64Data = await readFileAsBase64(file);
+                    filesArray.push({ filename: file.name, mimeType: file.type, file: base64Data });
+                } catch (err) {
+                    console.error("相片讀取失敗:", file.name, err);
+                }
+            }
+
+            if (filesArray.length === 0) return;
+
+            document.getElementById('gas-folderName').value = folderName;
+            
+            let filesInput = document.getElementById('gas-filesData');
+            if (!filesInput) {
+                filesInput = document.createElement('input');
+                filesInput.type = 'hidden';
+                filesInput.name = 'filesData';
+                filesInput.id = 'gas-filesData';
+                form.appendChild(filesInput);
+            }
+            filesInput.value = JSON.stringify(filesArray);
+
+            form.submit();
+            await new Promise(r => setTimeout(r, 1500));
+        }
+
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // 改為：從 Firebase 讀取資料
+        async function fetchReportsFromFirebase() {
+            if (!db) return;
+            try {
+                const snapshot = await db.collection("vehicle_reports").orderBy("created_at", "desc").get();
+                reportsDatabase = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderReportList();
+                populateTSummaryOptions();
+            } catch (err) {
+                console.error("載入 Firebase 資料失敗:", err.message);
+            }
+        }
+
+        function switchTab(tab) {
+            const d = document.getElementById('view-driver');
+            const a = document.getElementById('view-admin');
+            const btnD = document.getElementById('nav-driver-btn');
+            const btnA = document.getElementById('nav-admin-btn');
+
+            if (tab === 'driver') {
+                d.classList.remove('hidden');
+                a.classList.add('hidden');
+                btnD.className = "px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white transition";
+                btnA.className = "px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition";
+            } else {
+                d.classList.add('hidden');
+                a.classList.remove('hidden');
+                btnA.className = "px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white transition";
+                btnD.className = "px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 transition";
+            }
+        }
+
+        function verifyAdminPin() {
+            const pin = document.getElementById('admin-pin').value;
+            if (pin === '28668966') {
+                document.getElementById('admin-login-box').classList.add('hidden');
+                document.getElementById('admin-dashboard').classList.remove('hidden');
+                renderReportList();
+            } else {
+                alert('PIN 碼錯誤！');
+            }
+        }
+
+        function setAdminTab(tab) {
+            const r = document.getElementById('admin-panel-reports');
+            const s = document.getElementById('admin-panel-search');
+            const sum = document.getElementById('admin-panel-summary');
+
+            const btnR = document.getElementById('tab-btn-reports');
+            const btnS = document.getElementById('tab-btn-search');
+            const btnSum = document.getElementById('tab-btn-summary');
+
+            [r, s, sum].forEach(el => el.classList.add('hidden'));
+            [btnR, btnS, btnSum].forEach(el => el.className = "px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200");
+
+            if (tab === 'reports') {
+                r.classList.remove('hidden');
+                btnR.className = "px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white";
+            } else if (tab === 'search') {
+                s.classList.remove('hidden');
+                btnS.className = "px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white";
+            } else {
+                sum.classList.remove('hidden');
+                btnSum.className = "px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white";
+                populateTSummaryOptions();
+            }
+        }
+
+        function searchVehicleRecords() {
+            const query = document.getElementById('vehicle-search-input').value.trim().toLowerCase();
+            const tbody = document.getElementById('vehicle-search-tbody');
+
+            if (!query) {
+                tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-slate-400">請輸入車牌 或 VIN 進行搜尋。</td></tr>';
+                return;
+            }
+
+            const results = reportsDatabase.filter(r => {
+                const plate = (r.plate || '').toLowerCase();
+                const vin = (r.vin || '').toLowerCase();
+                const plateVin = (r.plate_vin || '').toLowerCase();
+                return plate.includes(query) || vin.includes(query) || plateVin.includes(query);
+            });
+
+            if (results.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-slate-400">找不到相關車輛的運送紀錄。</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = results.map(r => `
+                <tr class="hover:bg-slate-50 border-b border-slate-100">
+                    <td class="p-2.5 font-mono text-slate-600">${new Date(r.created_at).toLocaleDateString()}</td>
+                    <td class="p-2.5 font-bold text-blue-600 font-mono">${r.t_plate || '--'}</td>
+                    <td class="p-2.5 font-bold text-slate-800">${r.driver || '--'}</td>
+                    <td class="p-2.5 font-mono">${r.plate || r.vin || r.plate_vin || '--'}</td>
+                    <td class="p-2.5">${r.origin || r.location || '--'}</td>
+                    <td class="p-2.5">${r.destination || '--'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function setFilter(f) {
+            currentFilter = f;
+            ['cat1', 'cat2', 'pending'].forEach(btnKey => {
+                const el = document.getElementById(`btn-filter-${btnKey}`);
+                if (el) {
+                    if (btnKey === f) el.className = "px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 text-white whitespace-nowrap";
+                    else el.className = "px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 whitespace-nowrap";
+                }
+            });
+            renderReportList();
+        }
+
+        function renderReportList() {
+            const container = document.getElementById('admin-report-list');
+            if (!container) return;
+
+            let filtered = reportsDatabase.filter(r => {
+                if (currentFilter === 'cat1') return r.category === 1;
+                if (currentFilter === 'cat2') return r.category === 2;
+                if (currentFilter === 'pending') return r.category === 2 && r.status === 'pending';
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="text-center py-8 text-slate-400 text-xs">目前沒有對應的申報紀錄。</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(item => `
+                <div class="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3 hover:border-blue-300 transition cursor-pointer" onclick="openAdminDetailModal('${item.id || item.report_id}')">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="font-mono font-bold text-slate-900 text-sm">${item.report_id || item.id}</span>
+                            <span class="px-2 py-0.5 text-[10px] font-semibold ${item.category === 1 ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'} rounded">第 ${item.category} 類表單</span>
+                            ${item.category === 2 ? (item.status === 'pending' ? '<span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">待審核</span>' : '<span class="text-[10px] bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">已審核</span>') : ''}
+                        </div>
+                        <p class="text-xs text-slate-600 mt-1">T牌/車牌: <strong>${item.t_plate || item.plate || item.plate_vin || '--'}</strong> | 司機: <strong>${item.driver}</strong> | 客人/部門: <strong>${item.customer_dept || '--'}</strong></p>
+                    </div>
+                    <button class="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition flex items-center gap-1">
+                        <i data-lucide="edit" class="w-3.5 h-3.5"></i> 查看 / 編輯
+                    </button>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function populateTSummaryOptions() {
+            const select = document.getElementById('summary-t-select');
+            const plates = [...new Set(reportsDatabase.map(r => r.t_plate).filter(Boolean))];
+            select.innerHTML = '<option value="">-- 請選擇 T 牌號碼 --</option>' + plates.map(p => `<option value="${p}">${p}</option>`).join('');
+        }
+
+        function renderTSummary() {
+            const selectedPlate = document.getElementById('summary-t-select').value;
+            const targetLabel = document.getElementById('summary-target-plate');
+            const tbody = document.getElementById('summary-table-body');
+
+            if (!selectedPlate) {
+                targetLabel.textContent = '未選取';
+                tbody.innerHTML = '<tr><td colspan="7" class="p-4 text-center text-slate-400">請從上方選擇 T 牌號碼以載入行駛歷程。</td></tr>';
+                return;
+            }
+
+            targetLabel.textContent = selectedPlate;
+
+            const records = reportsDatabase
+                .filter(r => r.t_plate === selectedPlate)
+                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+            tbody.innerHTML = records.map(r => `
+                <tr class="hover:bg-slate-50">
+                    <td class="p-2.5 font-mono text-slate-600">${new Date(r.created_at).toLocaleString()}</td>
+                    <td class="p-2.5 font-bold text-slate-800">${r.driver || '--'}</td>
+                    <td class="p-2.5 text-slate-700">${r.customer_dept || '--'}</td>
+                    <td class="p-2.5">${(r.brand ? r.brand + ' ' : '') + (r.model || '--')}</td>
+                    <td class="p-2.5 font-mono">${r.plate || r.vin || r.plate_vin || '--'}</td>
+                    <td class="p-2.5">${r.origin || r.location || '--'}</td>
+                    <td class="p-2.5">${r.destination || '--'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function exportTSummaryCSV() {
+            const selectedPlate = document.getElementById('summary-t-select').value;
+            if (!selectedPlate) {
+                alert('請先選擇 T 牌號碼！');
+                return;
+            }
+
+            const records = reportsDatabase
+                .filter(r => r.t_plate === selectedPlate)
+                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+            if (records.length === 0) {
+                alert('該 T 牌目前無歷史紀錄可匯出。');
+                return;
+            }
+
+            let csvContent = "\uFEFF";
+            csvContent += "日期時間,司機/員工姓名,客人/部門,品牌,型號,車牌/VIN,出發地,目的地\n";
+
+            records.forEach(r => {
+                const dt = `"${new Date(r.created_at).toLocaleString()}"`;
+                const driver = `"${r.driver || ''}"`;
+                const dept = `"${r.customer_dept || ''}"`;
+                const brand = `"${r.brand || ''}"`;
+                const model = `"${r.model || ''}"`;
+                const pv = `"${r.plate || r.vin || r.plate_vin || ''}"`;
+                const origin = `"${r.origin || r.location || ''}"`;
+                const dest = `"${r.destination || ''}"`;
+
+                csvContent += `${dt},${driver},${dept},${brand},${model},${pv},${origin},${dest}\n`;
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.setAttribute("download", `新力機械_T牌歷程_${selectedPlate}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function openAdminDetailModal(id) {
+            const item = reportsDatabase.find(r => (String(r.id) === String(id) || String(r.report_id) === String(id)));
+            if (!item) return;
+            activeAdminReportId = id;
+
+            document.getElementById('modal-report-id').textContent = item.report_id || item.id;
+            document.getElementById('modal-timestamp').textContent = new Date(item.created_at).toLocaleString();
+            document.getElementById('modal-pdf-type').textContent = `申報類別：第 ${item.category} 類 (${item.category === 1 ? '日常交收車輛申報' : '車輛損壞申報'})`;
+
+            const main = document.getElementById('modal-main-content');
+            const auditSec = document.getElementById('modal-audit-section');
+
+            let itemsHtml = '';
+            if (item.items_checklist && Array.isArray(item.items_checklist)) {
+                itemsHtml = `
+                    <div class="border rounded-lg p-3 bg-slate-50 space-y-2">
+                        <h4 class="font-bold text-slate-800 border-b pb-1">隨車物品點檢記錄</h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                            ${item.items_checklist.map(i => `
+                                <div class="bg-white p-2 rounded border flex justify-between">
+                                    <span>${i.checked ? '✅' : '❌'} <strong>${i.name}</strong> (${i.qty || 1})</span>
+                                    <span class="text-slate-500">${i.notes || ''}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            let damageHtml = '';
+            if (item.damage_items && Array.isArray(item.damage_items) && item.damage_items.length > 0) {
+                damageHtml = `
+                    <div class="border rounded-lg p-3 bg-red-50/50 border-red-200 space-y-2">
+                        <h4 class="font-bold text-red-900 border-b border-red-200 pb-1">受損部位記錄</h4>
+                        <div class="space-y-1.5 text-[11px]">
+                            ${item.damage_items.map(d => `
+                                <div class="bg-white p-2 rounded border border-red-200 flex justify-between items-center">
+                                    <div>
+                                        <span class="font-bold text-red-700">${d.zoneName || '未標註部位'}</span>
+                                        <span class="ml-2 text-slate-600">[${(d.types || []).join(', ')}]</span>
+                                    </div>
+                                    <span class="text-slate-500">${d.desc || '無詳細描述'}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (item.category === 1) {
+                auditSec.classList.add('hidden');
+                main.innerHTML = `
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg border">
+                        <div><label class="font-bold text-slate-500 block">T 牌號碼</label><input type="text" id="edit-t-plate" value="${item.t_plate || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">司機/員工姓名</label><input type="text" id="edit-driver" value="${item.driver || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">客人/部門</label><input type="text" id="edit-customer-dept" value="${item.customer_dept || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">品牌</label><input type="text" id="edit-brand" value="${item.brand || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">型號</label><input type="text" id="edit-model" value="${item.model || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">車牌</label><input type="text" id="edit-plate" value="${item.plate || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">底盤號碼 (VIN)</label><input type="text" id="edit-vin" value="${item.vin || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">出發地</label><input type="text" id="edit-origin" value="${item.origin || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">目的地</label><input type="text" id="edit-destination" value="${item.destination || ''}" class="w-full p-1 border rounded"></div>
+                    </div>
+                    ${itemsHtml}
+                    ${damageHtml}
+                    <div>
+                        <label class="font-bold text-slate-500 block mb-1">詳細說明與備註</label>
+                        <textarea id="edit-description" rows="2" class="w-full p-2 border rounded">${item.description || ''}</textarea>
+                    </div>
+                `;
+            } else {
+                auditSec.classList.remove('hidden');
+                if (item.verdict) {
+                    document.getElementById('edit-verdict-responsibility').value = item.verdict.responsibility || '正常無損 (Normal)';
+                    document.getElementById('edit-verdict-status').value = item.verdict.status || 'approved';
+                } else {
+                    document.getElementById('edit-verdict-status').value = item.status || 'pending';
+                }
+                main.innerHTML = `
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-red-50/50 p-3 rounded-lg border border-red-200">
+                        <div><label class="font-bold text-slate-500 block">T牌/車牌/VIN</label><input type="text" id="edit-plate-vin" value="${item.plate_vin || item.t_plate || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">員工姓名</label><input type="text" id="edit-driver" value="${item.driver || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">車輛型號</label><input type="text" id="edit-model" value="${item.model || ''}" class="w-full p-1 border rounded"></div>
+                        <div><label class="font-bold text-slate-500 block">事故地點</label><input type="text" id="edit-location" value="${item.location || ''}" class="w-full p-1 border rounded"></div>
+                    </div>
+                    ${damageHtml}
+                    <div>
+                        <label class="font-bold text-slate-500 block mb-1">事故經過詳細說明</label>
+                        <textarea id="edit-description" rows="2" class="w-full p-2 border rounded">${item.description || ''}</textarea>
+                    </div>
+                `;
+            }
+
+            document.getElementById('admin-detail-modal').classList.remove('hidden');
+        }
+
+        function closeAdminDetailModal() {
+            document.getElementById('admin-detail-modal').classList.add('hidden');
+        }
+
+        // 改為：更新 Firebase 資料
+        async function saveAdminChanges() {
+            if (!activeAdminReportId || !db) return;
+
+            let updatePayload = {
+                driver: document.getElementById('edit-driver').value.trim(),
+                model: document.getElementById('edit-model').value.trim(),
+                description: document.getElementById('edit-description').value.trim()
+            };
+
+            const item = reportsDatabase.find(r => (String(r.id) === String(activeAdminReportId)));
+
+            if (item && item.category === 1) {
+                updatePayload.t_plate = document.getElementById('edit-t-plate').value.trim();
+                updatePayload.customer_dept = document.getElementById('edit-customer-dept').value.trim();
+                updatePayload.brand = document.getElementById('edit-brand').value.trim();
+                updatePayload.plate = document.getElementById('edit-plate').value.trim();
+                updatePayload.vin = document.getElementById('edit-vin').value.trim();
+                updatePayload.origin = document.getElementById('edit-origin').value.trim();
+                updatePayload.destination = document.getElementById('edit-destination').value.trim();
+            } else {
+                updatePayload.plate_vin = document.getElementById('edit-plate-vin').value.trim();
+                updatePayload.location = document.getElementById('edit-location').value.trim();
+                
+                const resp = document.getElementById('edit-verdict-responsibility').value;
+                const status = document.getElementById('edit-verdict-status').value;
+                updatePayload.status = status;
+                updatePayload.verdict = { responsibility: resp, status: status };
+            }
+
+            try {
+                await db.collection("vehicle_reports").doc(activeAdminReportId).update(updatePayload);
+                alert('申報單據修改成功！');
+                closeAdminDetailModal();
+                fetchReportsFromFirebase();
+            } catch (err) {
+                console.error("更新 Firebase 失敗:", err);
+                alert("更新失敗: " + err.message);
+            }
+        }
+
+        // 改為：從 Firebase 刪除資料
+        async function deleteCurrentReport() {
+            if (!activeAdminReportId || !db) return;
+            if (!confirm(`確定要刪除申報單據：${activeAdminReportId} 嗎？此操作無法撤銷！`)) return;
+
+            try {
+                await db.collection("vehicle_reports").doc(activeAdminReportId).delete();
+                alert('申報單據已成功刪除！');
+                closeAdminDetailModal();
+                fetchReportsFromFirebase();
+            } catch (err) {
+                console.error("刪除 Firebase 資料時發生異常:", err);
+                alert("刪除失敗: " + err.message);
+            }
+        }
+
+        function exportSinglePDF() {
+            const element = document.getElementById('pdf-report-card');
+            html2pdf().from(element).set({
+                margin: 10,
+                filename: `新力機械_車輛申報報告_${activeAdminReportId}.pdf`,
+                html2canvas: { scale: 2 },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            }).save();
+        }
+
+        function exportTSummaryPDF() {
+            const element = document.getElementById('summary-pdf-area');
+            const plate = document.getElementById('summary-t-select').value || 'ALL';
+            html2pdf().from(element).set({
+                margin: 10,
+                filename: `新力機械_T牌行駛歷程Summary_${plate}.pdf`,
+                html2canvas: { scale: 2 },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+            }).save();
+        }
+    </script>
+</body>
+</html>
