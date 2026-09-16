@@ -1027,7 +1027,6 @@
 
     <!-- JavaScript 核心與 Firebase 整合 -->
     <script>
-        // Firebase Config 參數
         const firebaseConfig = {
             apiKey: "AIzaSyAVSqdFFoepdwrRtxGjyoSBPwHlfxORGd8",
             authDomain: "newtech-system.firebaseapp.com",
@@ -1065,13 +1064,37 @@
             setupPasteAndDragListeners('cat1');
             setupPasteAndDragListeners('cat2');
 
-            // 自動將主管派單日期預設為當前日期 (YYYY-MM-DD)
+            // 自動將主管派單日期預設為當前日期
             const today = new Date().toISOString().split('T')[0];
             const dispatchDateInput = document.getElementById('dispatch-date');
             if (dispatchDateInput) {
                 dispatchDateInput.value = today;
             }
         });
+
+        // 🌟 自動產生下一個 NTL-DR-XXXXX 格式的 report_id
+        async function generateNextReportId() {
+            if (!db) return `NTL-DR-${Date.now().toString().slice(-5)}`;
+            try {
+                const snapshot = await db.collection("vehicle_reports").get();
+                let maxNum = 0;
+                snapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    const rId = data.report_id || doc.id;
+                    if (rId && rId.startsWith('NTL-DR-')) {
+                        const numPart = parseInt(rId.replace('NTL-DR-', ''), 10);
+                        if (!isNaN(numPart) && numPart > maxNum) {
+                            maxNum = numPart;
+                        }
+                    }
+                });
+                const nextNum = maxNum + 1;
+                return `NTL-DR-${String(nextNum).padStart(5, '0')}`;
+            } catch (e) {
+                console.error("生成 report_id 失敗:", e);
+                return `NTL-DR-${Math.floor(10000 + Math.random() * 90000)}`;
+            }
+        }
 
         // FCM 推送通知權限申請
         function requestNotificationPermission() {
@@ -1169,7 +1192,7 @@
             switchTab('driver');
         }
 
-        // 升級版：主管後台發布派單 (抓取日期選擇器與下拉選單數值)
+        // 主管後台發布派單
         async function dispatchNewOrder() {
             const dDate = document.getElementById('dispatch-date').value;
             const dPeriod = document.getElementById('dispatch-period').value;
@@ -1404,6 +1427,7 @@
             renderDamageCards(catPrefix);
         }
 
+        // 提交申報表單
         async function submitReport(e) {
             e.preventDefault();
 
@@ -1444,8 +1468,16 @@
             submitBtn.disabled = true;
             submitBtn.textContent = '提交中...';
 
+            // 🌟 自動獲取下一個 NTL-DR-XXXXX 編號
+            const newReportId = await generateNextReportId();
             const nowIso = new Date().toISOString();
-            let payload = { category: currentCategory, created_at: nowIso, status: 'pending' };
+
+            let payload = {
+                report_id: newReportId,
+                category: currentCategory,
+                created_at: nowIso,
+                status: 'pending'
+            };
 
             if (currentCategory === 1) {
                 const itemsList = [];
@@ -1493,10 +1525,9 @@
                 await uploadPhotosViaForm(photosToUpload, folderName);
             }
 
-            let newReportId = '';
             if (db) {
-                const docRef = await db.collection("vehicle_reports").add(payload);
-                newReportId = docRef.id;
+                // 將 report_id 同時設為 Firestore 文件 ID
+                await db.collection("vehicle_reports").doc(newReportId).set(payload);
             }
 
             submitBtn.disabled = false;
@@ -1509,7 +1540,7 @@
             const pvStr = pvParts.length > 0 ? pvParts.join(' / ') : '無填寫車牌/VIN';
 
             latestSummaryRawText = [
-                `單號：${payload.report_id || newReportId || 'NTL-DR-XXXXX'}`,
+                `單號：${newReportId}`,
                 `T牌：${payload.t_plate || '--'}`,
                 `車牌/VIN：${pvStr}`,
                 `品牌：${payload.brand || '--'}`,
@@ -1587,8 +1618,13 @@
         async function fetchReportsFromFirebase() {
             if (!db) return;
             try {
-                const snapshot = await db.collection("vehicle_reports").orderBy("created_at", "desc").get();
-                reportsDatabase = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const snapshot = await db.collection("vehicle_reports").get();
+                // 優先使用 report_id 作為主要 ID，並依建立時間倒序排序
+                reportsDatabase = snapshot.docs.map(doc => {
+                    const d = doc.data();
+                    return { id: d.report_id || doc.id, ...d };
+                }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
                 renderReportList();
                 populateTSummaryOptions();
             } catch (err) { console.error("Firebase 載入失敗:", err); }
@@ -1676,6 +1712,7 @@
             renderReportList();
         }
 
+        // 渲染主管後台單據列表
         function renderReportList() {
             const container = document.getElementById('admin-report-list');
             if (!container) return;
@@ -1764,10 +1801,11 @@
             document.body.removeChild(link);
         }
 
+        // 開啟後台彈窗詳情
         function openAdminDetailModal(id) {
-            const item = reportsDatabase.find(r => String(r.id) === String(id));
+            const item = reportsDatabase.find(r => String(r.id) === String(id) || String(r.report_id) === String(id));
             if (!item) return;
-            activeAdminReportId = id;
+            activeAdminReportId = item.id;
 
             document.getElementById('modal-report-id').textContent = item.report_id || item.id;
             document.getElementById('modal-timestamp').textContent = new Date(item.created_at).toLocaleString();
