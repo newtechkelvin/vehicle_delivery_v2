@@ -15,30 +15,34 @@
     <!-- html2pdf.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
-        .tear-card {
-            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.5s ease;
-            transform-origin: top center;
-        }
-        .tear-animation {
-            transform: translateY(120px) rotate(12deg) scale(0.9);
-            opacity: 0;
-            pointer-events: none;
-        }
-        .paper-stack {
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06), 0 10px 15px -3px rgba(0,0,0,0.1);
-            background: repeating-linear-gradient(#fff, #fff 28px, #e2e8f0 29px);
-        }
-        .car-zone { transition: all 0.18s ease; cursor: pointer; }
-        .car-zone:hover { fill: rgba(59, 130, 246, 0.3); }
-        .car-zone.active-damage { fill: rgba(239, 68, 68, 0.65); stroke: #b91c1c; stroke-width: 2.5px; }
-        .paste-zone { transition: all 0.2s ease; border: 2px dashed #cbd5e1; }
-        .paste-zone:hover, .paste-zone.dragover { border-color: #3b82f6; background-color: #eff6ff; }
-        @media print {
-            body * { visibility: hidden; }
-            .print-section, .print-section * { visibility: visible; }
-            .print-section { position: absolute; left: 0; top: 0; width: 100%; }
-            .no-print { display: none !important; }
-        }
+        /* 3D 翻牌揭示板樣式 */
+.card-container {
+    perspective: 1000px;
+    height: 220px;
+}
+.flip-card-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-style: preserve-3d;
+}
+/* 當加上 flipped 類別時執行 180 度翻轉 */
+.card-container.flipped .flip-card-inner {
+    transform: rotateY(180deg);
+}
+.flip-card-front, .flip-card-back {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    border-radius: 1rem;
+}
+/* 背面旋轉 180 度 */
+.flip-card-back {
+    transform: rotateY(180deg);
+}
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
@@ -1130,56 +1134,119 @@
             }
         }
 
-        // 第一頁：實時監聽今日派單 (Firebase Firestore)
-        function listenToOrdersRealtime() {
-            if (!db) return;
-            db.collection("daily_orders").onSnapshot(snapshot => {
-                const container = document.getElementById('orders-container');
-                container.innerHTML = '';
-                snapshot.docs.forEach(doc => {
-                    const order = { id: doc.id, ...doc.data() };
-                    container.appendChild(renderOrderCard(order));
-                });
-                lucide.createIcons();
+        // 第一頁：實時監聽今日派單 + 自動清理舊派單
+function listenToOrdersRealtime() {
+    if (!db) return;
+
+    // 🌟 自動清理：刪除 24 小時前且已完成 (completed) 的 Order
+    cleanupExpiredOrders();
+
+    db.collection("daily_orders").onSnapshot(snapshot => {
+        const container = document.getElementById('orders-container');
+        container.innerHTML = '';
+        
+        // 可選：僅在前端顯示未過期的派單
+        snapshot.docs.forEach(doc => {
+            const order = { id: doc.id, ...doc.data() };
+            container.appendChild(renderOrderCard(order));
+        });
+        lucide.createIcons();
+    });
+}
+
+// 🌟 自動清理過期 Order 的獨立函式
+async function cleanupExpiredOrders() {
+    if (!db) return;
+    
+    // 計算 24 小時前的時間點
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
+
+    try {
+        // 搜尋 24 小時前建立且已完成的派單
+        const snapshot = await db.collection("daily_orders")
+            .where("status", "==", "completed")
+            .where("created_at", "<=", twentyFourHoursAgo)
+            .get();
+
+        if (!snapshot.empty) {
+            const batch = db.batch();
+            snapshot.docs.forEach(doc => {
+                batch.delete(doc.ref);
             });
+            await batch.commit();
+            console.log(`已自動清理 ${snapshot.size} 筆超過 24 小時的已完成派單。`);
         }
+    } catch (err) {
+        console.error("自動清理舊派單時發生錯誤:", err);
+    }
+}
 
-        // 第一頁：渲染 3D 撕紙 Order 卡片
-        function renderOrderCard(order) {
-            const div = document.createElement('div');
-            div.id = `order-card-${order.id}`;
-            
-            if (order.status === 'completed') {
-                div.className = "tear-card paper-stack p-5 rounded-xl border border-slate-200 bg-slate-50 opacity-60 relative space-y-3";
-            } else {
-                div.className = "tear-card paper-stack p-5 rounded-xl border border-slate-300 relative space-y-3";
-            }
-            
-            let statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded-full font-bold">待接單</span>`;
-            if (order.status === 'accepted') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-blue-100 text-blue-800 rounded-full font-bold">已接單 (${order.driver})</span>`;
-            if (order.status === 'completed') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 rounded-full font-bold">✓ 已完成申報</span>`;
+       // 第一頁：渲染 3D 翻牌揭示板 Order 卡片
+function renderOrderCard(order) {
+    const container = document.createElement('div');
+    // 如果已接單或已完成，預設直接顯示背面
+    const isFlipped = order.status !== 'pending';
+    container.className = `card-container ${isFlipped ? 'flipped' : ''}`;
+    container.id = `order-card-${order.id}`;
 
-            div.innerHTML = `
-                <div class="flex justify-between items-start border-b border-dashed border-slate-300 pb-2">
-                    <span class="text-xs font-bold text-slate-500 font-mono">${order.dispatch_time || '今日'}</span>
+    let statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded-full font-bold">待接單</span>`;
+    if (order.status === 'accepted') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-blue-100 text-blue-800 rounded-full font-bold">已接單 (${order.driver})</span>`;
+    if (order.status === 'completed') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 rounded-full font-bold">✓ 已完成</span>`;
+
+    container.innerHTML = `
+        <div class="flip-card-inner">
+            <!-- 正面：揭示板蓋牌狀態 -->
+            <div class="flip-card-front bg-slate-900 text-white p-5 shadow-lg border border-slate-700 flex flex-col justify-between cursor-pointer" onclick="toggleCardFlip('${order.id}')">
+                <div class="flex justify-between items-center border-b border-slate-700 pb-2">
+                    <span class="text-xs font-mono text-slate-400">${order.dispatch_time || '今日派單'}</span>
                     ${statusBadge}
                 </div>
-                <div class="space-y-1 text-xs text-slate-700">
-                    <p><strong>客人/部門：</strong> ${order.dept || '--'}</p>
-                    <p><strong>預計車牌：</strong> <span class="font-mono font-bold text-blue-600">${order.plate || '--'}</span></p>
-                    <p><strong>出發地：</strong> ${order.origin}</p>
-                    <p><strong>目的地：</strong> ${order.destination}</p>
-                    <p class="text-slate-500"><strong>備註：</strong> ${order.notes || '無'}</p>
+                <div class="text-center py-4">
+                    <p class="text-xs text-blue-400 font-semibold mb-1">${order.dept || '部門未定'}</p>
+                    <h3 class="text-lg font-bold text-white font-mono">${order.plate || '預計車牌未填'}</h3>
+                    <p class="text-[11px] text-slate-400 mt-2">${order.origin} ➔ ${order.destination}</p>
                 </div>
-                <div class="pt-2 border-t border-slate-200 flex justify-end">
-                    ${order.status === 'pending' ? `<button onclick="openAcceptModal('${order.id}')" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow">撕單接單</button>` : ''}
-                    ${order.status === 'accepted' ? `<button onclick="completeOrderAndNavigate('${order.id}')" class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow">完成 Order 並填報</button>` : ''}
-                    ${order.status === 'completed' ? `<span class="text-xs text-emerald-600 font-bold flex items-center gap-1"><i data-lucide="check-circle" class="w-4 h-4"></i> 已完成交收</span>` : ''}
+                <div class="text-center text-[11px] text-slate-500 font-bold flex items-center justify-center gap-1">
+                    <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i> 點擊翻牌查看詳情
                 </div>
-            `;
-            return div;
-        }
+            </div>
 
+            <!-- 背面：詳細內容與操作按鈕 -->
+            <div class="flip-card-back bg-white p-5 shadow-md border border-slate-200 text-slate-800 flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-start border-b border-slate-100 pb-2 mb-2">
+                        <span class="text-xs font-bold font-mono text-slate-500">${order.dispatch_time || '今日'}</span>
+                        <div class="flex items-center gap-1">
+                            ${statusBadge}
+                            <button onclick="toggleCardFlip('${order.id}')" class="text-slate-400 hover:text-slate-600 ml-1 p-0.5"><i data-lucide="flip-horizontal" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                    <div class="space-y-1 text-xs text-slate-700">
+                        <p><strong>客人/部門：</strong> ${order.dept || '--'}</p>
+                        <p><strong>預計車牌：</strong> <span class="font-mono font-bold text-blue-600">${order.plate || '--'}</span></p>
+                        <p><strong>路線：</strong> ${order.origin} ➔ ${order.destination}</p>
+                        <p class="text-slate-500 truncate"><strong>備註：</strong> ${order.notes || '無'}</p>
+                    </div>
+                </div>
+                <div class="pt-2 border-t border-slate-100 flex justify-end">
+                    ${order.status === 'pending' ? `<button onclick="openAcceptModal('${order.id}')" class="w-full py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow">確認接單</button>` : ''}
+                    ${order.status === 'accepted' ? `<button onclick="completeOrderAndNavigate('${order.id}')" class="w-full py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow">完成 Order 並填報</button>` : ''}
+                    ${order.status === 'completed' ? `<span class="text-xs text-emerald-600 font-bold flex items-center gap-1 py-1"><i data-lucide="check-circle" class="w-4 h-4"></i> 已完成交收</span>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+    return container;
+}
+
+// 翻牌切換函式
+function toggleCardFlip(orderId) {
+    const card = document.getElementById(`order-card-${orderId}`);
+    if (card) {
+        card.classList.toggle('flipped');
+    }
+}
         function openAcceptModal(orderId) {
             selectedOrderForAccept = orderId;
             document.getElementById('accept-order-modal').classList.remove('hidden');
@@ -1189,23 +1256,22 @@
             document.getElementById('accept-order-modal').classList.add('hidden');
         }
 
-        // 接單並播 3D 撕紙動畫
-        async function confirmAcceptOrder() {
-            const tPlate = document.getElementById('accept-t-plate').value;
-            const driver = document.getElementById('accept-driver').value;
-            closeAcceptModal();
+async function confirmAcceptOrder() {
+    const tPlate = document.getElementById('accept-t-plate').value;
+    const driver = document.getElementById('accept-driver').value;
+    closeAcceptModal();
 
-            const card = document.getElementById(`order-card-${selectedOrderForAccept}`);
-            if (card) card.classList.add('tear-animation');
+    // 觸發 3D 翻牌效果
+    toggleCardFlip(selectedOrderForAccept);
 
-            if (db) {
-                await db.collection("daily_orders").doc(selectedOrderForAccept).update({
-                    status: 'accepted',
-                    t_plate: tPlate,
-                    driver: driver
-                });
-            }
-        }
+    if (db) {
+        await db.collection("daily_orders").doc(selectedOrderForAccept).update({
+            status: 'accepted',
+            t_plate: tPlate,
+            driver: driver
+        });
+    }
+}
 
         // 完成 Order 並攜帶資料切換至申報頁面
         async function completeOrderAndNavigate(orderId) {
