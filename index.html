@@ -1509,7 +1509,7 @@
             const pvStr = pvParts.length > 0 ? pvParts.join(' / ') : '無填寫車牌/VIN';
 
             latestSummaryRawText = [
-                `單號：${newReportId || 'NTL-DR-XXXXX'}`,
+                `單號：${payload.report_id || newReportId || 'NTL-DR-XXXXX'}`,
                 `T牌：${payload.t_plate || '--'}`,
                 `車牌/VIN：${pvStr}`,
                 `品牌：${payload.brand || '--'}`,
@@ -1696,7 +1696,7 @@
                 <div class="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3 hover:border-blue-300 transition cursor-pointer" onclick="openAdminDetailModal('${item.id}')">
                     <div>
                         <div class="flex items-center gap-2">
-                            <span class="font-mono font-bold text-slate-900 text-sm">${item.id}</span>
+                            <span class="font-mono font-bold text-slate-900 text-sm">${item.report_id || item.id}</span>
                             <span class="px-2 py-0.5 text-[10px] font-semibold ${item.category === 1 ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'} rounded">第 ${item.category} 類表單</span>
                             ${item.category === 2 ? (item.status === 'pending' ? '<span class="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">待審核</span>' : '<span class="text-[10px] bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">已審核</span>') : ''}
                         </div>
@@ -1769,7 +1769,7 @@
             if (!item) return;
             activeAdminReportId = id;
 
-            document.getElementById('modal-report-id').textContent = item.id;
+            document.getElementById('modal-report-id').textContent = item.report_id || item.id;
             document.getElementById('modal-timestamp').textContent = new Date(item.created_at).toLocaleString();
             document.getElementById('modal-pdf-type').textContent = `申報類別：第 ${item.category} 類 (${item.category === 1 ? '日常交收車輛申報' : '車輛損壞申報'})`;
 
