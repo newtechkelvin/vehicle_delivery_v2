@@ -1054,6 +1054,7 @@
         let currentFilter = 'cat1';
         let latestSummaryRawText = '';
         let selectedOrderForAccept = null;
+        let currentProcessingOrderId = null; // 記錄目前正在處理的 Order ID
 
         const photoStores = { cat1: [], cat2: [] };
 
@@ -1096,37 +1097,40 @@
             }
         }
 
-// FCM 推送通知權限申請與Token獲取
-async function requestNotificationPermission() {
-    if (!('Notification' in window)) {
-        alert('此瀏覽器不支援通知功能');
-        return;
-    }
-
-    try {
-        const permission = await Notification.requestPermission();
-        if (permission === 'granted') {
-            console.log('通知權限已獲取！');
-            
-            // 註冊 Service Worker
-            const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-            
-            // 取得裝置 FCM Token (需搭配 VAPID Key)
-            if (messaging) {
-                const token = await messaging.getToken({ serviceWorkerRegistration: registration });
-                console.log('FCM Token 成功取得:', token);
-                alert('已成功訂閱新單推送通知！');
-                
-                // 可將此 token 存入 Firebase 或訂閱 'all_drivers' 主題
+        // 🌟 FCM 推送通知權限申請與 Service Worker Token 註冊 (完整修復版)
+        async function requestNotificationPermission() {
+            if (!('Notification' in window)) {
+                alert('此手機/瀏覽器不支援 Web Push 通知功能。');
+                return;
             }
-        } else {
-            alert('您拒絕了通知權限，請至手機「設定」->「瀏覽器」開啟通知權限。');
+
+            try {
+                const permission = await Notification.requestPermission();
+                if (permission === 'granted') {
+                    console.log('通知權限已獲取！');
+                    
+                    // 1. 註冊 Service Worker 腳本
+                    const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                    console.log('Service Worker 註冊成功:', registration);
+
+                    // 2. 取得裝置 FCM Token
+                    if (messaging) {
+                        const token = await messaging.getToken({ serviceWorkerRegistration: registration });
+                        if (token) {
+                            console.log('FCM Token 成功取得:', token);
+                            alert('已成功訂閱手機新單推送通知！');
+                        } else {
+                            console.warn('無法取得 FCM Token，請確認專案 VAPID Key 設定。');
+                        }
+                    }
+                } else {
+                    alert('您拒絕了通知權限，請至手機「設定」->「瀏覽器」開啟通知權限。');
+                }
+            } catch (err) {
+                console.error('獲取 FCM Token 失敗:', err);
+                alert('訂閱失敗！iPhone 用戶請確保已點選 Safari 「分享」->「加入主畫面」後開啟 App 再試。');
+            }
         }
-    } catch (err) {
-        console.error('獲取 FCM Token 失敗:', err);
-        alert('訂閱失敗，請確保使用 HTTPS 協定或「加入主畫面」後再試。');
-    }
-}
 
         // 第一頁：實時監聽今日派單 (Firebase Firestore)
         function listenToOrdersRealtime() {
@@ -1146,11 +1150,16 @@ async function requestNotificationPermission() {
         function renderOrderCard(order) {
             const div = document.createElement('div');
             div.id = `order-card-${order.id}`;
-            div.className = "tear-card paper-stack p-5 rounded-xl border border-slate-300 relative space-y-3";
+            
+            if (order.status === 'completed') {
+                div.className = "tear-card paper-stack p-5 rounded-xl border border-slate-200 bg-slate-50 opacity-60 relative space-y-3";
+            } else {
+                div.className = "tear-card paper-stack p-5 rounded-xl border border-slate-300 relative space-y-3";
+            }
             
             let statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded-full font-bold">待接單</span>`;
             if (order.status === 'accepted') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-blue-100 text-blue-800 rounded-full font-bold">已接單 (${order.driver})</span>`;
-            if (order.status === 'completed') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-green-100 text-green-800 rounded-full font-bold">已完成</span>`;
+            if (order.status === 'completed') statusBadge = `<span class="px-2 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 rounded-full font-bold">✓ 已完成申報</span>`;
 
             div.innerHTML = `
                 <div class="flex justify-between items-start border-b border-dashed border-slate-300 pb-2">
@@ -1167,6 +1176,7 @@ async function requestNotificationPermission() {
                 <div class="pt-2 border-t border-slate-200 flex justify-end">
                     ${order.status === 'pending' ? `<button onclick="openAcceptModal('${order.id}')" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 shadow">撕單接單</button>` : ''}
                     ${order.status === 'accepted' ? `<button onclick="completeOrderAndNavigate('${order.id}')" class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow">完成 Order 並填報</button>` : ''}
+                    ${order.status === 'completed' ? `<span class="text-xs text-emerald-600 font-bold flex items-center gap-1"><i data-lucide="check-circle" class="w-4 h-4"></i> 已完成交收</span>` : ''}
                 </div>
             `;
             return div;
@@ -1202,6 +1212,9 @@ async function requestNotificationPermission() {
         // 完成 Order 並攜帶資料切換至申報頁面
         async function completeOrderAndNavigate(orderId) {
             if (!db) return;
+            
+            currentProcessingOrderId = orderId;
+
             const doc = await db.collection("daily_orders").doc(orderId).get();
             const order = doc.data();
 
@@ -1491,7 +1504,6 @@ async function requestNotificationPermission() {
             submitBtn.disabled = true;
             submitBtn.textContent = '提交中...';
 
-            // 🌟 自動獲取下一個 NTL-DR-XXXXX 編號
             const newReportId = await generateNextReportId();
             const nowIso = new Date().toISOString();
 
@@ -1549,8 +1561,15 @@ async function requestNotificationPermission() {
             }
 
             if (db) {
-                // 將 report_id 同時設為 Firestore 文件 ID
                 await db.collection("vehicle_reports").doc(newReportId).set(payload);
+
+                if (currentProcessingOrderId) {
+                    await db.collection("daily_orders").doc(currentProcessingOrderId).update({
+                        status: 'completed',
+                        completed_at: nowIso
+                    });
+                    currentProcessingOrderId = null;
+                }
             }
 
             submitBtn.disabled = false;
@@ -1642,7 +1661,6 @@ async function requestNotificationPermission() {
             if (!db) return;
             try {
                 const snapshot = await db.collection("vehicle_reports").get();
-                // 優先使用 report_id 作為主要 ID，並依建立時間倒序排序
                 reportsDatabase = snapshot.docs.map(doc => {
                     const d = doc.data();
                     return { id: d.report_id || doc.id, ...d };
