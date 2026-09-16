@@ -604,18 +604,227 @@
 
             <div id="admin-dashboard" class="space-y-6 hidden">
 
-                <!-- 新增：主管發布行程派單區域 -->
+                <!-- 升級版：主管發布行程派單區域 (支援日期選取與同款下拉選單) -->
                 <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <h3 class="text-base font-bold text-slate-900 flex items-center gap-2"><i data-lucide="plus-circle" class="w-5 h-5 text-blue-600"></i> 主管發布今日行程 (派單)</h3>
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div><label class="block text-xs font-semibold text-slate-600 mb-1">預定日期時間 / 上下午</label><input type="text" id="dispatch-time" placeholder="例如：2026-09-16 上午 10:00" class="w-full p-2 border border-slate-300 rounded-lg text-xs"></div>
-                        <div><label class="block text-xs font-semibold text-slate-600 mb-1">客人 / 部門</label><input type="text" id="dispatch-dept" placeholder="例如：機電工程署" class="w-full p-2 border border-slate-300 rounded-lg text-xs"></div>
-                        <div><label class="block text-xs font-semibold text-slate-600 mb-1">預計車牌</label><input type="text" id="dispatch-plate" placeholder="例如：AB1234" class="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"></div>
-                        <div><label class="block text-xs font-semibold text-slate-600 mb-1">出發地</label><input type="text" id="dispatch-origin" placeholder="例如：工場(八鄉)" class="w-full p-2 border border-slate-300 rounded-lg text-xs"></div>
-                        <div><label class="block text-xs font-semibold text-slate-600 mb-1">目的地</label><input type="text" id="dispatch-dest" placeholder="例如：EMSD - 九龍灣 G/F" class="w-full p-2 border border-slate-300 rounded-lg text-xs"></div>
-                        <div><label class="block text-xs font-semibold text-slate-600 mb-1">備註</label><input type="text" id="dispatch-notes" placeholder="例如：需攜帶專用配備" class="w-full p-2 border border-slate-300 rounded-lg text-xs"></div>
+                        
+                        <!-- 日期選擇 (預設當日) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">預定日期 *</label>
+                            <input type="date" id="dispatch-date" class="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+
+                        <!-- 預定時間 / 上下午 -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">預定時段 / 時間 *</label>
+                            <select id="dispatch-period" class="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="上午">上午 (AM)</option>
+                                <option value="下午">下午 (PM)</option>
+                                <option value="全日">全日</option>
+                                <option value="08:00">08:00</option>
+                                <option value="09:00">09:00</option>
+                                <option value="10:00">10:00</option>
+                                <option value="11:00">11:00</option>
+                                <option value="12:00">12:00</option>
+                                <option value="13:00">13:00</option>
+                                <option value="14:00">14:00</option>
+                                <option value="15:00">15:00</option>
+                                <option value="16:00">16:00</option>
+                                <option value="17:00">17:00</option>
+                                <option value="18:00">18:00</option>
+                            </select>
+                        </div>
+
+                        <!-- 客人 / 部門 (下拉選單 + 手動輸入) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">客人 / 部門</label>
+                            <select id="dispatch-dept-select" onchange="toggleCustomOption('dispatch-dept-select', 'dispatch-dept-custom')" class="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="">-- 請選擇客人 / 部門 --</option>
+                                <option value="警務處">警務處</option>
+                                <option value="消防處">消防處</option>
+                                <option value="懲教署">懲教署</option>
+                                <option value="機電工程署">機電工程署</option>
+                                <option value="海關">海關</option>
+                                <option value="食環署">食環署</option>
+                                <option value="漁護署">漁護署</option>
+                                <option value="政府部門">政府部門</option>
+                                <option value="衛生處">衛生處</option>
+                                <option value="博愛醫院">博愛醫院</option>
+                                <option value="東華三院">東華三院</option>
+                                <option value="保良局">保良局</option>
+                                <option value="耀能SAHK">耀能SAHK</option>
+                                <option value="匡智">匡智</option>
+                                <option value="靈實HOHCS">靈實HOHCS</option>
+                                <option value="明愛">明愛</option>
+                                <option value="非緊">非緊</option>
+                                <option value="復康會">復康會</option>
+                                <option value="易達">易達</option>
+                                <option value="鄰舍輔導會NAAC">鄰舍輔導會NAAC</option>
+                                <option value="基督教CFSC">基督教CFSC</option>
+                                <option value="紅十字會">紅十字會</option>
+                                <option value="駕駛學院">駕駛學院</option>
+                                <option value="中電CLP">中電CLP</option>
+                                <option value="港燈HKE">港燈HKE</option>
+                                <option value="other">其他 (手動輸入)</option>
+                            </select>
+                            <input type="text" id="dispatch-dept-custom" placeholder="請輸入部門名稱" class="w-full mt-2 p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                        </div>
+
+                        <!-- 預計車牌 -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">預計車牌</label>
+                            <input type="text" id="dispatch-plate" placeholder="例如：AB1234" class="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+
+                        <!-- 出發地 (下拉選單 + 手動輸入) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">出發地 *</label>
+                            <select id="dispatch-origin-select" onchange="toggleCustomOption('dispatch-origin-select', 'dispatch-origin-custom')" class="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="">-- 請選擇出發地 --</option>
+                                <option value="工場(八鄉)">工場(八鄉)</option>
+                                <option value="EMSD - 九龍灣 G/F">EMSD - 九龍灣 G/F</option>
+                                <option value="EMSD - 九龍灣 1/F">EMSD - 九龍灣 1/F</option>
+                                <option value="EMSD - 九龍灣 2/F">EMSD - 九龍灣 2/F</option>
+                                <option value="EMSD - 小蠔灣">EMSD - 小蠔灣</option>
+                                <option value="EMSD - 屯門">EMSD - 屯門</option>
+                                <option value="EMSD - 芬園">EMSD - 芬園</option>
+                                <option value="EMSD - 柴灣">EMSD - 柴灣</option>
+                                <option value="HKPF - PTU">HKPF - PTU</option>
+                                <option value="HKPF - 灣仔警總">HKPF - 灣仔警總</option>
+                                <option value="HKPF - 觀塘警署">HKPF - 觀塘警署</option>
+                                <option value="HKPF - 石硤尾警總">HKPF - 石硤尾警總</option>
+                                <option value="將軍澳消防學院">將軍澳消防學院</option>
+                                <option value="消防維修工程部 - 九龍灣">消防維修工程部 - 九龍灣</option>
+                                <option value="消防維修工程部 - 北角">消防維修工程部 - 北角</option>
+                                <option value="消防維修工程部 - 葵涌">消防維修工程部 - 葵涌</option>
+                                <option value="仁孚 - 思信車場">仁孚 - 思信車場</option>
+                                <option value="仁孚維修部 - 元朗">仁孚維修部 - 元朗</option>
+                                <option value="仁孚維修部 - 流浮山">仁孚維修部 - 流浮山</option>
+                                <option value="仁孚維修部 - 粉嶺">仁孚維修部 - 粉嶺</option>
+                                <option value="三菱 - 石崗車場">三菱 - 石崗車場</option>
+                                <option value="三菱 - 新田大昌">三菱 - 新田大昌</option>
+                                <option value="皇冠 - B1修理部">皇冠 - B1修理部</option>
+                                <option value="皇冠 - PDI">皇冠 - PDI</option>
+                                <option value="皇冠 - 大場">皇冠 - 大場</option>
+                                <option value="皇冠 - 元朗維修部 (豐田)">皇冠 - 元朗維修部 (豐田)</option>
+                                <option value="復康會 - 大業街車場">復康會 - 大業街車場</option>
+                                <option value="復康會 - 屯門石排">復康會 - 屯門石排</option>
+                                <option value="復康會 - 藍田">復康會 - 藍田</option>
+                                <option value="醫管局 - 九龍醫院">醫管局 - 九龍醫院</option>
+                                <option value="醫管局 - 沙田醫院">醫管局 - 沙田醫院</option>
+                                <option value="醫管局 - 東區醫院">醫管局 - 東區醫院</option>
+                                <option value="醫管局 - 博愛醫院">醫管局 - 博愛醫院</option>
+                                <option value="醫管局 - 葵涌醫院">醫管局 - 葵涌醫院</option>
+                                <option value="醫管局 - 瑪嘉烈醫院">醫管局 - 瑪嘉烈醫院</option>
+                                <option value="醫管局 - 瑪麗醫院">醫管局 - 瑪麗醫院</option>
+                                <option value="醫管局 - 廣華醫院">醫管局 - 廣華醫院</option>
+                                <option value="醫管局 - 聯合醫院">醫管局 - 聯合醫院</option>
+                                <option value="醫管局 - 靈實醫院">醫管局 - 靈實醫院</option>
+                                <option value="駕駛學院 - 元朗">駕駛學院 - 元朗</option>
+                                <option value="駕駛學院 - 沙田">駕駛學院 - 沙田</option>
+                                <option value="王大山 (痴貼紙)">王大山 (痴貼紙)</option>
+                                <option value="沛哥">沛哥</option>
+                                <option value="冷氣超 / 豪仔">冷氣超 / 豪仔</option>
+                                <option value="亞洲車身廠">亞洲車身廠</option>
+                                <option value="昂船洲福士廠">昂船洲福士廠</option>
+                                <option value="小欖 - 峻庭">小欖 - 峻庭</option>
+                                <option value="小欖 - 耀能">小欖 - 耀能</option>
+                                <option value="青衣驗車中心">青衣驗車中心</option>
+                                <option value="青衣中電">青衣中電</option>
+                                <option value="錦田大昌 - Gentech">錦田大昌 - Gentech</option>
+                                <option value="MAN廠 (新田)">MAN廠 (新田)</option>
+                                <option value="九號碼頭">九號碼頭</option>
+                                <option value="科程">科程</option>
+                                <option value="舊科程">舊科程</option>
+                                <option value="偉順防銹">偉順防銹</option>
+                                <option value="雄哥運輸">雄哥運輸</option>
+                                <option value="香港紅十字會甘迺迪中心">香港紅十字會甘迺迪中心</option>
+                                <option value="大埔匡智">大埔匡智</option>
+                                <option value="other">其他 (手動輸入)</option>
+                            </select>
+                            <input type="text" id="dispatch-origin-custom" placeholder="請輸入出發地" class="w-full mt-2 p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                        </div>
+
+                        <!-- 目的地 (下拉選單 + 手動輸入) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">目的地 *</label>
+                            <select id="dispatch-dest-select" onchange="toggleCustomOption('dispatch-dest-select', 'dispatch-dest-custom')" class="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="">-- 請選擇目的地 --</option>
+                                <option value="工場(八鄉)">工場(八鄉)</option>
+                                <option value="EMSD - 九龍灣 G/F">EMSD - 九龍灣 G/F</option>
+                                <option value="EMSD - 九龍灣 1/F">EMSD - 九龍灣 1/F</option>
+                                <option value="EMSD - 九龍灣 2/F">EMSD - 九龍灣 2/F</option>
+                                <option value="EMSD - 小蠔灣">EMSD - 小蠔灣</option>
+                                <option value="EMSD - 屯門">EMSD - 屯門</option>
+                                <option value="EMSD - 芬園">EMSD - 芬園</option>
+                                <option value="EMSD - 柴灣">EMSD - 柴灣</option>
+                                <option value="HKPF - PTU">HKPF - PTU</option>
+                                <option value="HKPF - 灣仔警總">HKPF - 灣仔警總</option>
+                                <option value="HKPF - 觀塘警署">HKPF - 觀塘警署</option>
+                                <option value="HKPF - 石硤尾警總">HKPF - 石硤尾警總</option>
+                                <option value="將軍澳消防學院">將軍澳消防學院</option>
+                                <option value="消防維修工程部 - 九龍灣">消防維修工程部 - 九龍灣</option>
+                                <option value="消防維修工程部 - 北角">消防維修工程部 - 北角</option>
+                                <option value="消防維修工程部 - 葵涌">消防維修工程部 - 葵涌</option>
+                                <option value="仁孚 - 思信車場">仁孚 - 思信車場</option>
+                                <option value="仁孚維修部 - 元朗">仁孚維修部 - 元朗</option>
+                                <option value="仁孚維修部 - 流浮山">仁孚維修部 - 流浮山</option>
+                                <option value="仁孚維修部 - 粉嶺">仁孚維修部 - 粉嶺</option>
+                                <option value="三菱 - 石崗車場">三菱 - 石崗車場</option>
+                                <option value="三菱 - 新田大昌">三菱 - 新田大昌</option>
+                                <option value="皇冠 - B1修理部">皇冠 - B1修理部</option>
+                                <option value="皇冠 - PDI">皇冠 - PDI</option>
+                                <option value="皇冠 - 大場">皇冠 - 大場</option>
+                                <option value="皇冠 - 元朗維修部 (豐田)">皇冠 - 元朗維修部 (豐田)</option>
+                                <option value="復康會 - 大業街車場">復康會 - 大業街車場</option>
+                                <option value="復康會 - 屯門石排">復康會 - 屯門石排</option>
+                                <option value="復康會 - 藍田">復康會 - 藍田</option>
+                                <option value="醫管局 - 九龍醫院">醫管局 - 九龍醫院</option>
+                                <option value="醫管局 - 沙田醫院">醫管局 - 沙田醫院</option>
+                                <option value="醫管局 - 東區醫院">醫管局 - 東區醫院</option>
+                                <option value="醫管局 - 博愛醫院">醫管局 - 博愛醫院</option>
+                                <option value="醫管局 - 葵涌醫院">醫管局 - 葵涌醫院</option>
+                                <option value="醫管局 - 瑪嘉烈醫院">醫管局 - 瑪嘉烈醫院</option>
+                                <option value="醫管局 - 瑪麗醫院">醫管局 - 瑪麗醫院</option>
+                                <option value="醫管局 - 廣華醫院">醫管局 - 廣華醫院</option>
+                                <option value="醫管局 - 聯合醫院">醫管局 - 聯合醫院</option>
+                                <option value="醫管局 - 靈實醫院">醫管局 - 靈實醫院</option>
+                                <option value="駕駛學院 - 元朗">駕駛學院 - 元朗</option>
+                                <option value="駕駛學院 - 沙田">駕駛學院 - 沙田</option>
+                                <option value="王大山 (痴貼紙)">王大山 (痴貼紙)</option>
+                                <option value="沛哥">沛哥</option>
+                                <option value="冷氣超 / 豪仔">冷氣超 / 豪仔</option>
+                                <option value="亞洲車身廠">亞洲車身廠</option>
+                                <option value="昂船洲福士廠">昂船洲福士廠</option>
+                                <option value="小欖 - 峻庭">小欖 - 峻庭</option>
+                                <option value="小欖 - 耀能">小欖 - 耀能</option>
+                                <option value="青衣驗車中心">青衣驗車中心</option>
+                                <option value="青衣中電">青衣中電</option>
+                                <option value="錦田大昌 - Gentech">錦田大昌 - Gentech</option>
+                                <option value="MAN廠 (新田)">MAN廠 (新田)</option>
+                                <option value="九號碼頭">九號碼頭</option>
+                                <option value="科程">科程</option>
+                                <option value="舊科程">舊科程</option>
+                                <option value="偉順防銹">偉順防銹</option>
+                                <option value="雄哥運輸">雄哥運輸</option>
+                                <option value="香港紅十字會甘迺迪中心">香港紅十字會甘迺迪中心</option>
+                                <option value="大埔匡智">大埔匡智</option>
+                                <option value="other">其他 (手動輸入)</option>
+                            </select>
+                            <input type="text" id="dispatch-dest-custom" placeholder="請輸入目的地" class="w-full mt-2 p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none hidden">
+                        </div>
+
+                        <!-- 備註 -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">備註</label>
+                            <input type="text" id="dispatch-notes" placeholder="例如：需攜帶專用配備" class="w-full p-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+
                     </div>
-                    <button onclick="dispatchNewOrder()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5"><i data-lucide="send" class="w-4 h-4"></i> 發布行程並自動推送通知</button>
+                    <button onclick="dispatchNewOrder()" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5">
+                        <i data-lucide="send" class="w-4 h-4"></i> 發布行程並自動推送通知
+                    </button>
                 </div>
 
                 <!-- 後台分頁切換 -->
@@ -818,7 +1027,7 @@
 
     <!-- JavaScript 核心與 Firebase 整合 -->
     <script>
-        // 你提供之 Firebase 正式 Key 參數
+        // Firebase Config 參數
         const firebaseConfig = {
             apiKey: "AIzaSyAVSqdFFoepdwrRtxGjyoSBPwHlfxORGd8",
             authDomain: "newtech-system.firebaseapp.com",
@@ -855,6 +1064,13 @@
             fetchReportsFromFirebase();
             setupPasteAndDragListeners('cat1');
             setupPasteAndDragListeners('cat2');
+
+            // 自動將主管派單日期預設為當前日期 (YYYY-MM-DD)
+            const today = new Date().toISOString().split('T')[0];
+            const dispatchDateInput = document.getElementById('dispatch-date');
+            if (dispatchDateInput) {
+                dispatchDateInput.value = today;
+            }
         });
 
         // FCM 推送通知權限申請
@@ -953,15 +1169,27 @@
             switchTab('driver');
         }
 
-        // 主管後台發布派單
+        // 升級版：主管後台發布派單 (抓取日期選擇器與下拉選單數值)
         async function dispatchNewOrder() {
+            const dDate = document.getElementById('dispatch-date').value;
+            const dPeriod = document.getElementById('dispatch-period').value;
+            const deptVal = getSelectOrCustomValue('dispatch-dept-select', 'dispatch-dept-custom');
+            const originVal = getSelectOrCustomValue('dispatch-origin-select', 'dispatch-origin-custom');
+            const destVal = getSelectOrCustomValue('dispatch-dest-select', 'dispatch-dest-custom');
+            const plateVal = document.getElementById('dispatch-plate').value.trim();
+            const notesVal = document.getElementById('dispatch-notes').value.trim();
+
+            if (!dDate) { alert('請選擇預定日期！'); return; }
+            if (!originVal) { alert('請選擇或輸入出發地！'); return; }
+            if (!destVal) { alert('請選擇或輸入目的地！'); return; }
+
             const payload = {
-                dispatch_time: document.getElementById('dispatch-time').value,
-                dept: document.getElementById('dispatch-dept').value,
-                plate: document.getElementById('dispatch-plate').value,
-                origin: document.getElementById('dispatch-origin').value,
-                destination: document.getElementById('dispatch-dest').value,
-                notes: document.getElementById('dispatch-notes').value,
+                dispatch_time: `${dDate} ${dPeriod}`,
+                dept: deptVal,
+                plate: plateVal,
+                origin: originVal,
+                destination: destVal,
+                notes: notesVal,
                 status: 'pending',
                 created_at: new Date().toISOString()
             };
@@ -969,6 +1197,14 @@
             if (db) {
                 await db.collection("daily_orders").add(payload);
                 alert('派單成功，已即時同步至司機端記事本！');
+                
+                document.getElementById('dispatch-plate').value = '';
+                document.getElementById('dispatch-notes').value = '';
+                
+                ['dispatch-dept-custom', 'dispatch-origin-custom', 'dispatch-dest-custom'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.classList.add('hidden');
+                });
             }
         }
 
