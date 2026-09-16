@@ -1097,7 +1097,7 @@
             }
         }
 
-        // 🌟 FCM 推送通知權限申請與 Service Worker Token 註冊 (完整修復版)
+        // FCM 推送通知權限申請與 Service Worker Token 註冊
         async function requestNotificationPermission() {
             if (!('Notification' in window)) {
                 alert('此手機/瀏覽器不支援 Web Push 通知功能。');
@@ -1109,11 +1109,9 @@
                 if (permission === 'granted') {
                     console.log('通知權限已獲取！');
                     
-                    // 1. 註冊 Service Worker 腳本
                     const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
                     console.log('Service Worker 註冊成功:', registration);
 
-                    // 2. 取得裝置 FCM Token
                     if (messaging) {
                         const token = await messaging.getToken({ serviceWorkerRegistration: registration });
                         if (token) {
@@ -1663,7 +1661,7 @@
                 const snapshot = await db.collection("vehicle_reports").get();
                 reportsDatabase = snapshot.docs.map(doc => {
                     const d = doc.data();
-                    return { id: d.report_id || doc.id, ...d };
+                    return { docId: doc.id, id: d.report_id || doc.id, ...d };
                 }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
                 renderReportList();
@@ -1771,7 +1769,7 @@
             }
 
             container.innerHTML = filtered.map(item => `
-                <div class="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3 hover:border-blue-300 transition cursor-pointer" onclick="openAdminDetailModal('${item.id}')">
+                <div class="p-4 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3 hover:border-blue-300 transition cursor-pointer" onclick="openAdminDetailModal('${item.docId || item.id}')">
                     <div>
                         <div class="flex items-center gap-2">
                             <span class="font-mono font-bold text-slate-900 text-sm">${item.report_id || item.id}</span>
@@ -1844,9 +1842,9 @@
 
         // 開啟後台彈窗詳情
         function openAdminDetailModal(id) {
-            const item = reportsDatabase.find(r => String(r.id) === String(id) || String(r.report_id) === String(id));
+            const item = reportsDatabase.find(r => String(r.docId) === String(id) || String(r.id) === String(id) || String(r.report_id) === String(id));
             if (!item) return;
-            activeAdminReportId = item.id;
+            activeAdminReportId = item.docId || item.id || item.report_id;
 
             document.getElementById('modal-report-id').textContent = item.report_id || item.id;
             document.getElementById('modal-timestamp').textContent = new Date(item.created_at).toLocaleString();
@@ -1945,7 +1943,7 @@
 
         async function saveAdminChanges() {
             if (!activeAdminReportId || !db) return;
-            const item = reportsDatabase.find(r => String(r.id) === String(activeAdminReportId));
+            const item = reportsDatabase.find(r => String(r.docId) === String(activeAdminReportId) || String(r.id) === String(activeAdminReportId));
             if (!item) return;
 
             let updatePayload = {
@@ -1971,20 +1969,42 @@
                 updatePayload.verdict = { responsibility: resp, status: status };
             }
 
-            await db.collection("vehicle_reports").doc(activeAdminReportId).update(updatePayload);
+            const docRefId = item.docId || activeAdminReportId;
+            await db.collection("vehicle_reports").doc(docRefId).update(updatePayload);
             alert('申報單據修改成功！');
             closeAdminDetailModal();
             fetchReportsFromFirebase();
         }
 
+        // 🌟 修復核心：徹底刪除申報單紀錄並實時更新資料庫與畫面
         async function deleteCurrentReport() {
             if (!activeAdminReportId || !db) return;
-            if (!confirm(`確定要刪除申報單據：${activeAdminReportId} 嗎？此操作無法撤銷！`)) return;
+            const item = reportsDatabase.find(r => String(r.docId) === String(activeAdminReportId) || String(r.id) === String(activeAdminReportId));
+            const reportName = item ? (item.report_id || item.id) : activeAdminReportId;
 
-            await db.collection("vehicle_reports").doc(activeAdminReportId).delete();
-            alert('申報單據已成功刪除！');
-            closeAdminDetailModal();
-            fetchReportsFromFirebase();
+            if (!confirm(`確定要刪除申報單據：${reportName} 嗎？此操作無法撤銷！`)) return;
+
+            try {
+                const targetDocId = item ? item.docId : activeAdminReportId;
+                
+                // 1. 刪除 vehicle_reports 集合中的文件
+                await db.collection("vehicle_reports").doc(targetDocId).delete();
+
+                // 2. 如果是報告編號，同步確保按 report_id 欄位搜尋並清除備用紀錄
+                if (item && item.report_id) {
+                    const snap = await db.collection("vehicle_reports").where("report_id", "==", item.report_id).get();
+                    snap.forEach(async (doc) => {
+                        await db.collection("vehicle_reports").doc(doc.id).delete();
+                    });
+                }
+
+                alert('申報單據已成功刪除！');
+                closeAdminDetailModal();
+                await fetchReportsFromFirebase(); // 即時重新抓取資料庫刷新 UI
+            } catch (err) {
+                console.error("刪除失敗:", err);
+                alert('刪除失敗，請檢查權限或連線狀況。');
+            }
         }
 
         function exportSinglePDF() {
